@@ -23,6 +23,7 @@ import (
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/config"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/device"
 	bpf "github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/ebpf"
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/kvm"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/qga"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/qmp"
 )
@@ -41,6 +42,7 @@ func main() {
 		"qmp", cfg.EnableQMP,
 		"qga", cfg.EnableQGA,
 		"ebpf", cfg.EnableEBPF,
+		"kvm", cfg.EnableKVM,
 	)
 
 	log := slog.Default()
@@ -56,6 +58,10 @@ func main() {
 
 	if cfg.EnableQGA {
 		startQGA(ctx, cfg, stores.podStore, stores.dynClient, log)
+	}
+
+	if cfg.EnableKVM {
+		startKVM(ctx, cfg, stores.podStore, log)
 	}
 
 	if cfg.EnableEBPF {
@@ -178,6 +184,19 @@ func startQGA(ctx context.Context, cfg *config.Config, podStore cache.Store, dyn
 	go collector.Run(ctx)
 
 	log.Info("qga: subsystem started")
+}
+
+func startKVM(ctx context.Context, cfg *config.Config, podStore cache.Store, log *slog.Logger) {
+	collector := kvm.NewCollector(kvm.Config{
+		NodeName:     cfg.NodeName,
+		PollInterval: cfg.KVMPollInterval,
+		DebugFSPath:  cfg.KVMDebugFSPath,
+	}, podStore, log)
+
+	prometheus.MustRegister(collector)
+	go collector.Run(ctx)
+
+	log.Info("kvm: subsystem started", "debugfs", cfg.KVMDebugFSPath)
 }
 
 func startEBPF(ctx context.Context, cfg *config.Config, stores informerStores, log *slog.Logger) {

@@ -5,6 +5,7 @@ A Prometheus exporter that monitors storage I/O latency for OpenShift Virtualiza
 - **QMP subsystem** — connects to each VM's QEMU Monitor Protocol to collect per-disk read/write/flush latency histograms directly from the hypervisor
 - **QGA subsystem** — uses the QEMU Guest Agent to collect guest-side I/O latency and IOPS from Windows VMs via Windows Performance Counters (PDH raw counters)
 - **eBPF subsystem** — attaches kernel tracepoints and kprobes to capture block and NFS I/O latency across the node, correlated to Kubernetes pods and PersistentVolumeClaims
+- **KVM subsystem** — reads KVM hypervisor event counters (exits, hypercalls, TLB flushes, halt exits) from the kernel debugfs at `/sys/kernel/debug/kvm/`
 
 All three subsystems are independently enabled/disabled and degrade gracefully if one fails to start.
 
@@ -24,6 +25,8 @@ Storage virtqueue ◄─────── QMP: queue_inuse / queue_size (satura
   ▼
 QEMU block backend ◄────── QMP: I/O latency histogram (hypervisor-side)
   │
+KVM (hypervisor) ◄───────── KVM: exits, hypercalls, tlb_flush, halt_exits
+  │
   ├──► Host block layer ◄─ eBPF block: block_rq_issue → block_rq_complete
   │
   └──► Host NFS client ◄── eBPF NFS: nfs_initiate_* → nfs_*_done
@@ -35,6 +38,19 @@ QEMU block backend ◄────── QMP: I/O latency histogram (hypervisor-
 When diagnosing latency, compare metrics across layers: if QMP latency is high but eBPF block latency is low, the bottleneck is in the virtio/QEMU layer. If both are high, the problem is in the storage backend. If guest-side (QGA) latency is high but QMP latency is low, queuing is building up inside the guest.
 
 VMI-level metrics use the `kubevirt_vmi_storage_*` prefix; exporter-scoped operational and eBPF metrics use the `kme_*` prefix.
+
+### KVM metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kubevirt_vmi_kvm_exits_total` | counter | namespace, name, node, pod | Total KVM VM exits (guest→hypervisor transitions) |
+| `kubevirt_vmi_kvm_hypercalls_total` | counter | namespace, name, node, pod | Total KVM hypercalls issued by the guest |
+| `kubevirt_vmi_kvm_tlb_flushes_total` | counter | namespace, name, node, pod | Total KVM TLB flush events |
+| `kubevirt_vmi_kvm_halt_exits_total` | counter | namespace, name, node, pod | Total KVM exits triggered by guest halt instructions |
+| `kme_kvm_scrape_errors_total` | counter | | Errors during KVM debugfs poll cycles |
+| `kme_kvm_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last KVM poll |
+
+Counters are read from `/sys/kernel/debug/kvm/<pid>-<fd>/` and aggregated across all KVM file-descriptor entries for a single QEMU process. A high exit rate relative to vCPU time indicates the guest is spending significant cycles in hypervisor context. A high `halt_exits` rate is normal for idle VMs (vCPUs sleeping) but abnormal for CPU-intensive ones.
 
 ### QMP metrics
 
@@ -89,6 +105,17 @@ Virtqueue saturation per disk (ratio of in-flight descriptors to capacity):
 kubevirt_vmi_storage_queue_inuse / (kubevirt_vmi_storage_queue_size > 0)
 ```
 
+P99 host-side block I/O latency attributed to a pod's PVC:
+```promql
+histogram_quantile(0.99,
+  sum by (namespace, persistentvolumeclaim, pod, operation, le) (
+    rate(kme_block_io_latency_seconds_bucket{operation=~"read|write"}[5m])
+  )
+)
+```
+
+See [`docs/example-queries.md`](docs/example-queries.md) for a full per-metric query reference.
+
 The `bus` label distinguishes `virtio` (per-disk virtio-blk devices) from `scsi` (shared virtio-scsi controller). For virtio-scsi, `disk` and `persistentvolumeclaim` are empty because the virtqueues belong to the shared controller rather than any individual disk.
 
 ## Configuration
@@ -128,6 +155,14 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 | `--qga-concurrency` | `QGA_CONCURRENCY` | `8` | Max parallel QGA operations |
 | `--qga-label-filter` | `QGA_LABEL_FILTER` | | Additional pod label selector for QGA |
 
+### KVM
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--enable-kvm` | `ENABLE_KVM` | `true` | Enable KVM debugfs stats collection |
+| `--kvm-poll-interval` | `KVM_POLL_INTERVAL` | `30s` | Poll interval for KVM counters |
+| `--kvm-debugfs-path` | `KVM_DEBUGFS_PATH` | `/sys/kernel/debug/kvm` | Path to KVM debugfs directory |
+
 ### eBPF
 
 | Flag | Env | Default | Description |
@@ -164,8 +199,10 @@ The rules cover two areas:
 |-------|----------|-----------|
 | KMEQMPPollStale | warning | QMP poll > 5 min stale |
 | KMEQGAPollStale | warning | QGA poll > 5 min stale |
+| KMEKVMPollStale | warning | KVM poll > 90s stale |
 | KMEQMPScrapeErrors | warning | Sustained QMP errors for 15m |
 | KMEQGAScrapeErrors | warning | Sustained QGA errors for 15m |
+| KMEKVMScrapeErrors | warning | Sustained KVM errors for 15m |
 | KMEeBPFSubsystemDown | warning | Block eBPF subsystem down for 10m |
 | KMEAbsent | critical | No metrics scraped for 10m |
 

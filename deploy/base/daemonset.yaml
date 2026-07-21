@@ -44,6 +44,10 @@ spec:
               value: "true"
             - name: ENABLE_EBPF_NFS_KPROBE
               value: "false"
+            - name: ENABLE_KVM
+              value: "true"
+            - name: KVM_POLL_INTERVAL
+              value: "30s"
             - name: QMP_POLL_INTERVAL
               value: "1m"
             - name: EBPF_SCAN_INTERVAL
