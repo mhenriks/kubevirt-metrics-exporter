@@ -20,7 +20,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/cgroup"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/config"
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/cri"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/device"
 	bpf "github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/ebpf"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/kvm"
@@ -43,6 +45,7 @@ func main() {
 		"qga", cfg.EnableQGA,
 		"ebpf", cfg.EnableEBPF,
 		"kvm", cfg.EnableKVM,
+		"cgroup", cfg.EnableCgroup,
 	)
 
 	log := slog.Default()
@@ -62,6 +65,10 @@ func main() {
 
 	if cfg.EnableKVM {
 		startKVM(ctx, cfg, stores.podStore, log)
+	}
+
+	if cfg.EnableCgroup {
+		startCgroup(ctx, cfg, stores.podStore, log)
 	}
 
 	if cfg.EnableEBPF {
@@ -140,7 +147,7 @@ func startInformers(ctx context.Context, nodeName string, log *slog.Logger) info
 }
 
 func startQMP(ctx context.Context, cfg *config.Config, podStore cache.Store, dynClient dynamic.Interface, log *slog.Logger) {
-	criClient, err := qmp.NewCRIClient(cfg.CRISocket)
+	criClient, err := cri.NewClient(cfg.CRISocket)
 	if err != nil {
 		log.Error("qmp: creating CRI client", "error", err)
 		os.Exit(1)
@@ -163,7 +170,7 @@ func startQMP(ctx context.Context, cfg *config.Config, podStore cache.Store, dyn
 }
 
 func startQGA(ctx context.Context, cfg *config.Config, podStore cache.Store, dynClient dynamic.Interface, log *slog.Logger) {
-	criClient, err := qmp.NewCRIClient(cfg.CRISocket)
+	criClient, err := cri.NewClient(cfg.CRISocket)
 	if err != nil {
 		log.Error("qga: creating CRI client", "error", err)
 		os.Exit(1)
@@ -190,13 +197,34 @@ func startKVM(ctx context.Context, cfg *config.Config, podStore cache.Store, log
 	collector := kvm.NewCollector(kvm.Config{
 		NodeName:     cfg.NodeName,
 		PollInterval: cfg.KVMPollInterval,
-		DebugFSPath:  cfg.KVMDebugFSPath,
+		DebugFSPath:  "/sys/kernel/debug/kvm",
 	}, podStore, log)
 
 	prometheus.MustRegister(collector)
 	go collector.Run(ctx)
 
-	log.Info("kvm: subsystem started", "debugfs", cfg.KVMDebugFSPath)
+	log.Info("kvm: subsystem started")
+}
+
+func startCgroup(ctx context.Context, cfg *config.Config, podStore cache.Store, log *slog.Logger) {
+	criClient, err := cri.NewClient(cfg.CRISocket)
+	if err != nil {
+		log.Error("cgroup: creating CRI client", "error", err)
+		os.Exit(1)
+	}
+
+	collector := cgroup.NewCollector(cgroup.Config{
+		NodeName:     cfg.NodeName,
+		PollInterval: cfg.CgroupPollInterval,
+		CgroupRoot:   "/sys/fs/cgroup",
+		ProcPath:     "/proc",
+		SysPath:      "/sys",
+	}, podStore, criClient, log)
+
+	prometheus.MustRegister(collector)
+	go collector.Run(ctx)
+
+	log.Info("cgroup: subsystem started")
 }
 
 func startEBPF(ctx context.Context, cfg *config.Config, stores informerStores, log *slog.Logger) {

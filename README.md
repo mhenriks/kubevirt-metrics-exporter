@@ -6,8 +6,9 @@ A Prometheus exporter that monitors storage I/O latency for OpenShift Virtualiza
 - **QGA subsystem** — uses the QEMU Guest Agent to collect guest-side I/O latency and IOPS from Windows VMs via Windows Performance Counters (PDH raw counters)
 - **eBPF subsystem** — attaches kernel tracepoints and kprobes to capture block and NFS I/O latency across the node, correlated to Kubernetes pods and PersistentVolumeClaims
 - **KVM subsystem** — reads KVM hypervisor event counters (exits, hypercalls, TLB flushes, halt exits) from the kernel debugfs at `/sys/kernel/debug/kvm/`
+- **Cgroup subsystem** — reads per-VMI cgroup v2 memory stats (anonymous, THP) from QEMU process cgroups, and exposes per-node kernel thread CPU usage (`khugepaged`, `ksmd`) and KSM memory profit
 
-All three subsystems are independently enabled/disabled and degrade gracefully if one fails to start.
+All subsystems are independently enabled/disabled and degrade gracefully if one fails to start.
 
 ## Metrics
 
@@ -51,6 +52,30 @@ VMI-level metrics use the `kubevirt_vmi_storage_*` prefix; exporter-scoped opera
 | `kme_kvm_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last KVM poll |
 
 Counters are read from `/sys/kernel/debug/kvm/<pid>-<fd>/` and aggregated across all KVM file-descriptor entries for a single QEMU process. A high exit rate relative to vCPU time indicates the guest is spending significant cycles in hypervisor context. A high `halt_exits` rate is normal for idle VMs (vCPUs sleeping) but abnormal for CPU-intensive ones.
+
+### Cgroup metrics
+
+Per-VMI memory metrics (aligned with [CRI-O PR #10143](https://github.com/cri-o/cri-o/pull/10143)):
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `container_memory_active_anon_bytes` | gauge | namespace, name, node, pod | Active anonymous memory in bytes |
+| `container_memory_inactive_anon_bytes` | gauge | namespace, name, node, pod | Inactive anonymous memory in bytes |
+| `container_memory_anon_thp_bytes` | gauge | namespace, name, node, pod | Anonymous memory backed by transparent hugepages in bytes |
+| `container_memory_shmem_thp_bytes` | gauge | namespace, name, node, pod | Shared memory backed by transparent hugepages in bytes (kernel 6.8+) |
+| `container_memory_file_thp_bytes` | gauge | namespace, name, node, pod | File-backed memory backed by transparent hugepages in bytes |
+
+Per-node kernel thread and KSM metrics:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kme_cgroup_khugepaged_cpu_seconds_total` | counter | node | Cumulative CPU time consumed by the khugepaged kernel thread |
+| `kme_cgroup_ksmd_cpu_seconds_total` | counter | node | Cumulative CPU time consumed by the ksmd kernel thread |
+| `node_ksmd_general_profit_bytes` | gauge | | Net memory saved by KSM after subtracting tracking overhead (aligned with [node_exporter PR #3778](https://github.com/prometheus/node_exporter/pull/3778)) |
+| `kme_cgroup_scrape_errors_total` | counter | | Errors during cgroup poll cycles |
+| `kme_cgroup_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last cgroup poll |
+
+Memory metrics are read from the cgroup v2 `memory.stat` file of each QEMU process. The `container_memory_*` naming aligns with the CRI-O proposal to allow future migration when CRI-O exposes these natively. The `kme_*` prefix is used for exporter-specific kernel thread metrics. The `node_ksmd_*` naming aligns with the node_exporter proposal.
 
 ### QMP metrics
 
@@ -161,7 +186,13 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 |------|-----|---------|-------------|
 | `--enable-kvm` | `ENABLE_KVM` | `true` | Enable KVM debugfs stats collection |
 | `--kvm-poll-interval` | `KVM_POLL_INTERVAL` | `30s` | Poll interval for KVM counters |
-| `--kvm-debugfs-path` | `KVM_DEBUGFS_PATH` | `/sys/kernel/debug/kvm` | Path to KVM debugfs directory |
+
+### Cgroup
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--enable-cgroup` | `ENABLE_CGROUP` | `true` | Enable cgroup v2 memory and kernel thread collection |
+| `--cgroup-poll-interval` | `CGROUP_POLL_INTERVAL` | `30s` | Poll interval for cgroup stats |
 
 ### eBPF
 
@@ -200,9 +231,11 @@ The rules cover two areas:
 | KMEQMPPollStale | warning | QMP poll > 5 min stale |
 | KMEQGAPollStale | warning | QGA poll > 5 min stale |
 | KMEKVMPollStale | warning | KVM poll > 90s stale |
+| KMECgroupPollStale | warning | Cgroup poll > 90s stale |
 | KMEQMPScrapeErrors | warning | Sustained QMP errors for 15m |
 | KMEQGAScrapeErrors | warning | Sustained QGA errors for 15m |
 | KMEKVMScrapeErrors | warning | Sustained KVM errors for 15m |
+| KMECgroupScrapeErrors | warning | Sustained cgroup errors for 15m |
 | KMEeBPFSubsystemDown | warning | Block eBPF subsystem down for 10m |
 | KMEAbsent | critical | No metrics scraped for 10m |
 

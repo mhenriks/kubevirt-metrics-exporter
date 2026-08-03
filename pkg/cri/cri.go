@@ -1,4 +1,4 @@
-package qmp
+package cri
 
 import (
 	"context"
@@ -16,12 +16,12 @@ type ContainerInfo struct {
 	PID         int
 }
 
-type CRIClient struct {
+type Client struct {
 	conn *grpc.ClientConn
 	rc   runtimev1.RuntimeServiceClient
 }
 
-func NewCRIClient(socketPath string) (*CRIClient, error) {
+func NewClient(socketPath string) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -33,17 +33,17 @@ func NewCRIClient(socketPath string) (*CRIClient, error) {
 		return nil, fmt.Errorf("connecting to CRI socket %s: %w", socketPath, err)
 	}
 
-	return &CRIClient{
+	return &Client{
 		conn: conn,
 		rc:   runtimev1.NewRuntimeServiceClient(conn),
 	}, nil
 }
 
-func (c *CRIClient) Close() error {
+func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *CRIClient) FindComputePID(ctx context.Context, podName, namespace string) (*ContainerInfo, error) {
+func (c *Client) FindComputePID(ctx context.Context, podName, namespace string) (*ContainerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -79,7 +79,7 @@ func (c *CRIClient) FindComputePID(ctx context.Context, podName, namespace strin
 	}, nil
 }
 
-func (c *CRIClient) extractPID(ctx context.Context, containerID string) (int, error) {
+func (c *Client) extractPID(ctx context.Context, containerID string) (int, error) {
 	resp, err := c.rc.ContainerStatus(ctx, &runtimev1.ContainerStatusRequest{
 		ContainerId: containerID,
 		Verbose:     true,

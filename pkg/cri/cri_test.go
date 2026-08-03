@@ -1,9 +1,16 @@
-package qmp
+package cri
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func TestCRI(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "CRI Suite")
+}
 
 var _ = Describe("parsePID", func() {
 	Context("with CRI-O format", func() {

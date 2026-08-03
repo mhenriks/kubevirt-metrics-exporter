@@ -1,7 +1,6 @@
 package kvm
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -13,8 +12,9 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/vmi"
 )
 
 var (
@@ -145,8 +145,7 @@ func (c *Collector) poll() {
 		return
 	}
 
-	// Build a lookup from "namespace_name" → pod name using the pod store.
-	domainToPod := c.buildDomainToPodMap()
+	domainToPod := vmi.BuildDomainToPodMap(c.podStore)
 
 	var (
 		results      []vmiStats
@@ -154,12 +153,12 @@ func (c *Collector) poll() {
 	)
 
 	for pid, stats := range pidMap {
-		domainName, ok := readDomainName(pid)
+		domainName, ok := vmi.ReadDomainName(pid, "/proc")
 		if !ok {
 			continue
 		}
 
-		ns, vmiName, ok := parseDomainName(domainName)
+		ns, vmiName, ok := vmi.ParseDomainName(domainName)
 		if !ok {
 			c.log.Debug("kvm: skipping unrecognised domain name", "pid", pid, "name", domainName)
 			continue
@@ -259,63 +258,4 @@ func readUint64File(path string) uint64 {
 		return 0
 	}
 	return v
-}
-
-// readDomainName extracts the VM name from /proc/<pid>/cmdline by looking for
-// the argument following the "-name" flag.  QEMU formats it as
-// "guest=<name>,debug-threads=on" or just "<name>".
-func readDomainName(pid int) (string, bool) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return "", false
-	}
-	args := bytes.Split(data, []byte{0})
-	for i, arg := range args {
-		if string(arg) == "-name" && i+1 < len(args) {
-			name := string(args[i+1])
-			name = strings.TrimPrefix(name, "guest=")
-			name = strings.SplitN(name, ",", 2)[0]
-			if name != "" {
-				return name, true
-			}
-		}
-	}
-	return "", false
-}
-
-// parseDomainName splits a libvirt domain name of the form "namespace_vmname"
-// into its components.  Names with underscores in the VMI name are handled by
-// using the first underscore as the separator, since Kubernetes namespaces do
-// not contain underscores.
-func parseDomainName(domain string) (ns, name string, ok bool) {
-	idx := strings.Index(domain, "_")
-	if idx <= 0 {
-		return "", "", false
-	}
-	return domain[:idx], domain[idx+1:], true
-}
-
-// buildDomainToPodMap returns a map from "namespace_vminame" to pod name for
-// all running virt-launcher pods visible in the pod store.
-func (c *Collector) buildDomainToPodMap() map[string]string {
-	m := make(map[string]string)
-	for _, obj := range c.podStore.List() {
-		pod, ok := obj.(*corev1.Pod)
-		if !ok {
-			continue
-		}
-		if pod.Status.Phase != corev1.PodRunning {
-			continue
-		}
-		if pod.Labels["kubevirt.io"] != "virt-launcher" {
-			continue
-		}
-		vmiName := pod.Labels["vm.kubevirt.io/name"]
-		if vmiName == "" {
-			continue
-		}
-		key := pod.Namespace + "_" + vmiName
-		m[key] = pod.Name
-	}
-	return m
 }

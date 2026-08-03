@@ -48,6 +48,10 @@ spec:
               value: "true"
             - name: KVM_POLL_INTERVAL
               value: "30s"
+            - name: ENABLE_CGROUP
+              value: "true"
+            - name: CGROUP_POLL_INTERVAL
+              value: "30s"
             - name: QMP_POLL_INTERVAL
               value: "1m"
             - name: EBPF_SCAN_INTERVAL

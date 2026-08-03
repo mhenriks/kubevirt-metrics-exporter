@@ -96,32 +96,6 @@ var _ = Describe("parsePIDFromDir", func() {
 	)
 })
 
-var _ = Describe("parseDomainName", func() {
-	It("splits on first underscore", func() {
-		ns, name, ok := parseDomainName("mynamespace_myvmi")
-		Expect(ok).To(BeTrue())
-		Expect(ns).To(Equal("mynamespace"))
-		Expect(name).To(Equal("myvmi"))
-	})
-
-	It("handles VMI names that contain underscores", func() {
-		ns, name, ok := parseDomainName("ns_vmi_with_underscores")
-		Expect(ok).To(BeTrue())
-		Expect(ns).To(Equal("ns"))
-		Expect(name).To(Equal("vmi_with_underscores"))
-	})
-
-	It("returns false when there is no underscore", func() {
-		_, _, ok := parseDomainName("nodomain")
-		Expect(ok).To(BeFalse())
-	})
-
-	It("returns false when underscore is first character", func() {
-		_, _, ok := parseDomainName("_vmi")
-		Expect(ok).To(BeFalse())
-	})
-})
-
 var _ = Describe("Collector.scanDebugFS", func() {
 	It("aggregates counters across multiple fd entries for the same PID", func() {
 		root := fakeDebugFS(map[string]map[string]string{
@@ -184,43 +158,6 @@ var _ = Describe("Collector.scanDebugFS", func() {
 		s := pidMap[1000]
 		Expect(s.exits).To(Equal(uint64(77)))
 		Expect(s.hypercalls).To(Equal(uint64(0)))
-	})
-})
-
-var _ = Describe("Collector.buildDomainToPodMap", func() {
-	It("maps running virt-launcher pods", func() {
-		store := fakePodStore(
-			virtLauncherPod("ns1", "vm1", "virt-launcher-vm1-abc"),
-			virtLauncherPod("ns2", "vm2", "virt-launcher-vm2-xyz"),
-		)
-		c := &Collector{podStore: store}
-		m := c.buildDomainToPodMap()
-		Expect(m).To(Equal(map[string]string{
-			"ns1_vm1": "virt-launcher-vm1-abc",
-			"ns2_vm2": "virt-launcher-vm2-xyz",
-		}))
-	})
-
-	It("excludes non-running pods", func() {
-		pod := virtLauncherPod("ns", "vm", "virt-launcher-vm-abc")
-		pod.Status.Phase = corev1.PodPending
-		store := fakePodStore(pod)
-		c := &Collector{podStore: store}
-		Expect(c.buildDomainToPodMap()).To(BeEmpty())
-	})
-
-	It("excludes pods without the virt-launcher label", func() {
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "other-pod",
-				Namespace: "ns",
-				Labels:    map[string]string{"vm.kubevirt.io/name": "vm"},
-			},
-			Status: corev1.PodStatus{Phase: corev1.PodRunning},
-		}
-		store := fakePodStore(pod)
-		c := &Collector{podStore: store}
-		Expect(c.buildDomainToPodMap()).To(BeEmpty())
 	})
 })
 

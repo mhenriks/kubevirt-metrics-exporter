@@ -41,7 +41,10 @@ type Config struct {
 	// KVM subsystem
 	EnableKVM       bool
 	KVMPollInterval time.Duration
-	KVMDebugFSPath  string
+
+	// Cgroup subsystem
+	EnableCgroup       bool
+	CgroupPollInterval time.Duration
 
 	// eBPF subsystem
 	EnableEBPF           bool
@@ -88,7 +91,10 @@ func Parse() *Config {
 	// KVM flags
 	flag.BoolVar(&c.EnableKVM, "enable-kvm", envBoolOrDefault("ENABLE_KVM", true), "Enable KVM debugfs stats collection")
 	flag.DurationVar(&c.KVMPollInterval, "kvm-poll-interval", envDurationOrDefault("KVM_POLL_INTERVAL", 30*time.Second), "Poll interval for KVM debugfs stats")
-	flag.StringVar(&c.KVMDebugFSPath, "kvm-debugfs-path", envOrDefault("KVM_DEBUGFS_PATH", "/sys/kernel/debug/kvm"), "Path to KVM debugfs directory")
+
+	// Cgroup flags
+	flag.BoolVar(&c.EnableCgroup, "enable-cgroup", envBoolOrDefault("ENABLE_CGROUP", true), "Enable cgroup v2 memory and kernel thread metrics collection")
+	flag.DurationVar(&c.CgroupPollInterval, "cgroup-poll-interval", envDurationOrDefault("CGROUP_POLL_INTERVAL", 30*time.Second), "Poll interval for cgroup stats")
 
 	// eBPF flags
 	flag.BoolVar(&c.EnableEBPF, "enable-ebpf", envBoolOrDefault("ENABLE_EBPF", true), "Enable eBPF-based I/O latency collection")

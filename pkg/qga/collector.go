@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/cri"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/qmp"
 )
 
@@ -70,7 +71,7 @@ type vmiResult struct {
 type Collector struct {
 	cfg       CollectorConfig
 	podStore  cache.Store
-	criClient *qmp.CRIClient
+	criClient *cri.Client
 	dynClient dynamic.Interface
 	log       *slog.Logger
 
@@ -83,7 +84,7 @@ type Collector struct {
 	vms    map[string]*vmState
 }
 
-func NewCollector(cfg CollectorConfig, podStore cache.Store, criClient *qmp.CRIClient, dynClient dynamic.Interface, log *slog.Logger) *Collector {
+func NewCollector(cfg CollectorConfig, podStore cache.Store, criClient *cri.Client, dynClient dynamic.Interface, log *slog.Logger) *Collector {
 	return &Collector{
 		cfg:       cfg,
 		podStore:  podStore,
