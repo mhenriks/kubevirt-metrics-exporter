@@ -38,6 +38,11 @@ type Config struct {
 	QGAConcurrency  int
 	QGALabelFilter  string
 
+	// KVM subsystem
+	EnableKVM       bool
+	KVMPollInterval time.Duration
+	KVMDebugFSPath  string
+
 	// eBPF subsystem
 	EnableEBPF           bool
 	EnableEBPFBlock      bool
@@ -79,6 +84,11 @@ func Parse() *Config {
 	flag.IntVar(&c.QGARetries, "qga-retries", envIntOrDefault("QGA_RETRIES", 10), "Max consecutive failures before stopping QGA polling for a VM")
 	flag.IntVar(&c.QGAConcurrency, "qga-concurrency", envIntOrDefault("QGA_CONCURRENCY", 8), "Max concurrent QGA operations")
 	flag.StringVar(&c.QGALabelFilter, "qga-label-filter", envOrDefault("QGA_LABEL_FILTER", ""), "Additional label selector for QGA virt-launcher pods")
+
+	// KVM flags
+	flag.BoolVar(&c.EnableKVM, "enable-kvm", envBoolOrDefault("ENABLE_KVM", true), "Enable KVM debugfs stats collection")
+	flag.DurationVar(&c.KVMPollInterval, "kvm-poll-interval", envDurationOrDefault("KVM_POLL_INTERVAL", 30*time.Second), "Poll interval for KVM debugfs stats")
+	flag.StringVar(&c.KVMDebugFSPath, "kvm-debugfs-path", envOrDefault("KVM_DEBUGFS_PATH", "/sys/kernel/debug/kvm"), "Path to KVM debugfs directory")
 
 	// eBPF flags
 	flag.BoolVar(&c.EnableEBPF, "enable-ebpf", envBoolOrDefault("ENABLE_EBPF", true), "Enable eBPF-based I/O latency collection")
