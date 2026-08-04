@@ -150,6 +150,36 @@ spec:
               {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }}
               in pod {{ $labels.pod }} has exceeded 250ms for 10 minutes.
 
+    - name: kubevirt-overhead
+      rules:
+        - alert: KSMDCPUHigh
+          expr: |
+            rate(kme_cgroup_ksmd_cpu_seconds_total[5m]) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ksmd consuming >50% CPU on node {{ $labels.node }}"
+            description: >-
+              The ksmd kernel thread on node {{ $labels.node }} has been using
+              more than 50% of a CPU core for over 10 minutes. This may indicate
+              overly aggressive KSM scan parameters (pages_to_scan / sleep_millisecs)
+              or a large volume of volatile pages causing excessive re-scanning.
+
+        - alert: KhugepagedCPUHigh
+          expr: |
+            rate(kme_cgroup_khugepaged_cpu_seconds_total[5m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "khugepaged consuming >10% CPU on node {{ $labels.node }}"
+            description: >-
+              The khugepaged kernel thread on node {{ $labels.node }} has been
+              using more than 10% of a CPU core for over 10 minutes. This may
+              indicate excessive transparent huge page collapse activity, possibly
+              due to a large number of VMs faulting memory simultaneously.
+
     # The job label must match the PodMonitor name in deploy/podmonitor/podmonitor.yaml.
     - name: kubevirt-metrics-exporter-health
       rules:
