@@ -59,4 +59,4 @@ lint:
 	golangci-lint run ./...
 
 fmt:
-	gofmt -s -w .
+	find . -name '*.go' -not -path './vendor/*' -exec gofmt -s -w {} +

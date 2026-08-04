@@ -25,8 +25,8 @@ jobs:
 
       - name: Check formatting
         run: |
-          gofmt -s -l .
-          test -z "$(gofmt -s -l .)" || (echo "Run 'gofmt -s -w .'" && exit 1)
+          bad=$(gofmt -s -l $(find . -name '*.go' -not -path './vendor/*'))
+          test -z "$bad" || (echo "$bad"; echo "Run 'gofmt -s -w .'" && exit 1)
 
       - name: Check go mod tidy
         run: |
