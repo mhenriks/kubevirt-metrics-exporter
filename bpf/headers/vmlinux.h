@@ -1151,6 +1151,8 @@ struct task_struct {
 	struct thread_struct thread;
 };
 
+#if defined(__TARGET_ARCH_x86)
+
 struct fred_cs {
 	u64 cs: 16;
 	u64 sl: 2;
@@ -1210,6 +1212,49 @@ struct math_emu_info {
 	long int ___orig_eip;
 	struct pt_regs *regs;
 };
+
+#elif defined(__TARGET_ARCH_arm64)
+
+struct user_pt_regs {
+	__u64 regs[31];
+	__u64 sp;
+	__u64 pc;
+	__u64 pstate;
+};
+
+struct pt_regs {
+	struct user_pt_regs user_regs;
+	u64 orig_x0;
+	s32 syscallno;
+	u32 unused2;
+};
+
+#elif defined(__TARGET_ARCH_s390)
+
+typedef struct {
+	long unsigned int mask;
+	long unsigned int addr;
+} psw_t;
+
+typedef struct {
+	long unsigned int args[1];
+	psw_t psw;
+	long unsigned int gprs[16];
+} user_pt_regs;
+
+struct pt_regs {
+	union {
+		user_pt_regs user_regs;
+		struct {
+			long unsigned int args[1];
+			psw_t psw;
+			long unsigned int gprs[16];
+		};
+	};
+	long unsigned int orig_gpr2;
+};
+
+#endif
 
 enum fortify_func {
 	FORTIFY_FUNC_strncpy = 0,
