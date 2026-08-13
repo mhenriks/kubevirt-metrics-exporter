@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/cri"
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -117,7 +118,7 @@ func (vc *vmConnection) close() {
 type Collector struct {
 	cfg       PollerConfig
 	podStore  cache.Store
-	criClient *CRIClient
+	criClient *cri.Client
 	dynClient dynamic.Interface
 	log       *slog.Logger
 
@@ -130,7 +131,7 @@ type Collector struct {
 	connections map[string]*vmConnection
 }
 
-func NewCollector(cfg PollerConfig, podStore cache.Store, criClient *CRIClient, dynClient dynamic.Interface, log *slog.Logger) *Collector {
+func NewCollector(cfg PollerConfig, podStore cache.Store, criClient *cri.Client, dynClient dynamic.Interface, log *slog.Logger) *Collector {
 	return &Collector{
 		cfg:         cfg,
 		podStore:    podStore,
