@@ -5,7 +5,8 @@ resources:
 - ../podmonitor
 - ../prometheus-rules
 - scc.yaml
-- scc-role.yaml
+- scc-clusterrole.yaml
+- scc-clusterrolebinding.yaml
 - datasource.yaml
 - dashboard.yaml
 patches:
