@@ -11,16 +11,6 @@ resources:
 - dashboard.yaml
 patches:
 - patch: |
-    apiVersion: v1
-    kind: Namespace
-    metadata:
-      name: kubevirt-metrics-exporter
-      labels:
-        openshift.io/cluster-monitoring: "true"
-  target:
-    kind: Namespace
-    name: kubevirt-metrics-exporter
-- patch: |
     apiVersion: apps/v1
     kind: DaemonSet
     metadata:
