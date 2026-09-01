@@ -109,6 +109,14 @@ Per-node kernel thread and KSM metrics:
 | `kme_cgroup_khugepaged_cpu_seconds_total` | counter | node | Cumulative CPU time consumed by the khugepaged kernel thread |
 | `kme_cgroup_ksmd_cpu_seconds_total` | counter | node | Cumulative CPU time consumed by the ksmd kernel thread |
 | `node_ksmd_general_profit_bytes` | gauge | | Net memory saved by KSM after subtracting tracking overhead (aligned with [node_exporter PR #3778](https://github.com/prometheus/node_exporter/pull/3778)) |
+| `kme_node_thp_split_pmd_total` | counter | node | THP page table downgrades (`thp_split_pmd` from `/proc/vmstat`) |
+| `kme_node_thp_collapse_alloc_total` | counter | node | Successful THP collapses by khugepaged (`thp_collapse_alloc` from `/proc/vmstat`) |
+| `kme_node_movable_bytes_order_ge_9` | gauge | node, numa | Movable-capable free buddy memory at page order ≥9 in bytes (buddy minus pagetype Unmovable and Isolate) |
+| `kme_node_movable_bytes_all_orders` | gauge | node, numa | Movable-capable free buddy memory across all orders in bytes (buddy minus Unmovable and Isolate) |
+| `kme_node_buddy_bytes_order_ge_9` | gauge | node, numa | Total free buddy memory at page order ≥9 in bytes (exact, Normal zone, `/proc/buddyinfo`) |
+| `kme_node_buddy_bytes_all_orders` | gauge | node, numa | Total free buddy memory across all orders in bytes (exact, Normal zone, `/proc/buddyinfo`) |
+| `kme_node_unmovable_bytes_order_ge_9` | gauge | node, numa | Unmovable free buddy memory at page order ≥9 in bytes (Normal zone, `/proc/pagetypinfo`) |
+| `kme_node_unmovable_bytes_all_orders` | gauge | node, numa | Unmovable free buddy memory across all orders in bytes (Normal zone, `/proc/pagetypinfo`) |
 | `kme_cgroup_scrape_errors_total` | counter | | Errors during cgroup poll cycles |
 | `kme_cgroup_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last cgroup poll |
 

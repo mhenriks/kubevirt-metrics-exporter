@@ -73,6 +73,62 @@ var (
 		"Net memory saved by KSM after subtracting rmap_item tracking overhead in bytes. Negative means KSM overhead exceeds savings.",
 		nil, nil,
 	)
+
+	thpSplitPMDDesc = prometheus.NewDesc(
+		"kme_node_thp_split_pmd_total",
+		"Total number of THP page table downgrades (thp_split_pmd from /proc/vmstat)",
+		[]string{"node"},
+		nil,
+	)
+
+	thpCollapseAllocDesc = prometheus.NewDesc(
+		"kme_node_thp_collapse_alloc_total",
+		"Total number of successful THP collapses by khugepaged (thp_collapse_alloc from /proc/vmstat)",
+		[]string{"node"},
+		nil,
+	)
+
+	movableOrderGe9Desc = prometheus.NewDesc(
+		"kme_node_movable_bytes_order_ge_9",
+		"Movable-capable free buddy memory at page order 9 and above in bytes (Normal zone; buddy minus pagetype Unmovable and Isolate)",
+		[]string{"node", "numa"},
+		nil,
+	)
+
+	movableAllOrdersDesc = prometheus.NewDesc(
+		"kme_node_movable_bytes_all_orders",
+		"Movable-capable free buddy memory across all page orders in bytes (Normal zone; buddy minus pagetype Unmovable and Isolate)",
+		[]string{"node", "numa"},
+		nil,
+	)
+
+	buddyOrderGe9Desc = prometheus.NewDesc(
+		"kme_node_buddy_bytes_order_ge_9",
+		"Total free buddy memory at page order 9 and above in bytes (Normal zone, exact from /proc/buddyinfo)",
+		[]string{"node", "numa"},
+		nil,
+	)
+
+	buddyAllOrdersDesc = prometheus.NewDesc(
+		"kme_node_buddy_bytes_all_orders",
+		"Total free buddy memory across all page orders in bytes (Normal zone, exact from /proc/buddyinfo)",
+		[]string{"node", "numa"},
+		nil,
+	)
+
+	unmovableOrderGe9Desc = prometheus.NewDesc(
+		"kme_node_unmovable_bytes_order_ge_9",
+		"Unmovable free buddy memory at page order 9 and above in bytes (Normal zone, from /proc/pagetypinfo)",
+		[]string{"node", "numa"},
+		nil,
+	)
+
+	unmovableAllOrdersDesc = prometheus.NewDesc(
+		"kme_node_unmovable_bytes_all_orders",
+		"Unmovable free buddy memory across all page orders in bytes (Normal zone, from /proc/pagetypinfo)",
+		[]string{"node", "numa"},
+		nil,
+	)
 )
 
 // Operational metric descriptors.
@@ -116,6 +172,13 @@ type nodeStats struct {
 	ksmdAvailable      bool
 	ksmProfit          int64
 	ksmProfitAvailable bool
+	thpSplitPMD        uint64
+	thpCollapseAlloc   uint64
+	thpVMStatAvailable bool
+	buddyByNuma        []numaBuddyFree
+	buddyAvailable     bool
+	excludedByNuma     []numaPagetypeExcluded
+	pagetypeAvailable  bool
 }
 
 type Collector struct {
@@ -184,6 +247,14 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- khugepageCPUDesc
 	ch <- ksmdCPUDesc
 	ch <- ksmProfitDesc
+	ch <- thpSplitPMDDesc
+	ch <- thpCollapseAllocDesc
+	ch <- movableOrderGe9Desc
+	ch <- movableAllOrdersDesc
+	ch <- buddyOrderGe9Desc
+	ch <- buddyAllOrdersDesc
+	ch <- unmovableOrderGe9Desc
+	ch <- unmovableAllOrdersDesc
 	ch <- scrapeErrorsDesc
 	ch <- lastPollDesc
 }
@@ -212,6 +283,38 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 	if c.node.ksmProfitAvailable {
 		ch <- prometheus.MustNewConstMetric(ksmProfitDesc, prometheus.GaugeValue, float64(c.node.ksmProfit))
+	}
+	if c.node.thpVMStatAvailable {
+		ch <- prometheus.MustNewConstMetric(thpSplitPMDDesc, prometheus.CounterValue, float64(c.node.thpSplitPMD), c.cfg.NodeName)
+		ch <- prometheus.MustNewConstMetric(thpCollapseAllocDesc, prometheus.CounterValue, float64(c.node.thpCollapseAlloc), c.cfg.NodeName)
+	}
+	if c.node.buddyAvailable {
+		for _, b := range c.node.buddyByNuma {
+			ch <- prometheus.MustNewConstMetric(buddyOrderGe9Desc, prometheus.GaugeValue, float64(b.OrderGe9Bytes), c.cfg.NodeName, b.NUMA)
+			ch <- prometheus.MustNewConstMetric(buddyAllOrdersDesc, prometheus.GaugeValue, float64(b.AllOrdersBytes), c.cfg.NodeName, b.NUMA)
+		}
+	}
+	if c.node.pagetypeAvailable {
+		for _, e := range c.node.excludedByNuma {
+			ch <- prometheus.MustNewConstMetric(unmovableOrderGe9Desc, prometheus.GaugeValue, float64(e.UnmovableOrderGe9Bytes), c.cfg.NodeName, e.NUMA)
+			ch <- prometheus.MustNewConstMetric(unmovableAllOrdersDesc, prometheus.GaugeValue, float64(e.UnmovableAllOrdersBytes), c.cfg.NodeName, e.NUMA)
+		}
+	}
+	if c.node.buddyAvailable && c.node.pagetypeAvailable {
+		excludedByNUMA := make(map[string]numaPagetypeExcluded, len(c.node.excludedByNuma))
+		for _, e := range c.node.excludedByNuma {
+			excludedByNUMA[e.NUMA] = e
+		}
+		for _, b := range c.node.buddyByNuma {
+			e, ok := excludedByNUMA[b.NUMA]
+			if !ok {
+				continue
+			}
+			movableGe9 := subtractExcludedBytes(b.OrderGe9Bytes, e.excludedOrderGe9Bytes())
+			movableAll := subtractExcludedBytes(b.AllOrdersBytes, e.excludedAllOrdersBytes())
+			ch <- prometheus.MustNewConstMetric(movableOrderGe9Desc, prometheus.GaugeValue, float64(movableGe9), c.cfg.NodeName, b.NUMA)
+			ch <- prometheus.MustNewConstMetric(movableAllOrdersDesc, prometheus.GaugeValue, float64(movableAll), c.cfg.NodeName, b.NUMA)
+		}
 	}
 }
 
@@ -321,6 +424,28 @@ func (c *Collector) collectNodeStats() nodeStats {
 	profit, ok := readKSMGeneralProfit(c.cfg.SysPath)
 	ns.ksmProfit = profit
 	ns.ksmProfitAvailable = ok
+
+	if vmstat, err := readVMStatTHP(c.cfg.ProcPath); err != nil {
+		c.log.Debug("cgroup: reading vmstat THP counters", "error", err)
+	} else {
+		ns.thpSplitPMD = vmstat.splitPMD
+		ns.thpCollapseAlloc = vmstat.collapseAlloc
+		ns.thpVMStatAvailable = true
+	}
+
+	if buddy, err := readBuddyNormal(c.cfg.ProcPath); err != nil {
+		c.log.Debug("cgroup: reading buddyinfo", "error", err)
+	} else {
+		ns.buddyByNuma = buddy
+		ns.buddyAvailable = true
+	}
+
+	if excluded, err := readPagetypeExcludedNormal(c.cfg.ProcPath); err != nil {
+		c.log.Debug("cgroup: reading pagetypeinfo excluded migratypes", "error", err)
+	} else {
+		ns.excludedByNuma = excluded
+		ns.pagetypeAvailable = true
+	}
 
 	return ns
 }
