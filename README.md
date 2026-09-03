@@ -1,12 +1,12 @@
 # KubeVirt Metrics Exporter
 
-A Prometheus exporter that monitors storage I/O latency for OpenShift Virtualization workloads. It runs as a DaemonSet and combines three collection methods in a single container:
+A Prometheus exporter for OpenShift Virtualization that combines storage I/O latency tracing with VM memory and THP observability. It runs as a DaemonSet with several independent collection subsystems in a single container:
 
 - **QMP subsystem** — connects to each VM's QEMU Monitor Protocol to collect per-disk read/write/flush latency histograms directly from the hypervisor
 - **QGA subsystem** — uses the QEMU Guest Agent to collect guest-side I/O latency and IOPS from Windows VMs via Windows Performance Counters (PDH raw counters)
 - **eBPF subsystem** — attaches kernel tracepoints and kprobes to capture block and NFS I/O latency across the node, correlated to Kubernetes pods and PersistentVolumeClaims
 - **KVM subsystem** — reads KVM hypervisor event counters (exits, hypercalls, TLB flushes, halt exits) from the kernel debugfs at `/sys/kernel/debug/kvm/`
-- **Cgroup subsystem** — reads per-VMI cgroup v2 memory stats (anonymous, THP) from QEMU process cgroups, and exposes per-node kernel thread CPU usage (`khugepaged`, `ksmd`) and KSM memory profit
+- **Cgroup subsystem** — reads per-VMI cgroup v2 memory stats (anonymous, THP) from QEMU process cgroups; per-node buddy/pagetype THP readiness (`/proc/buddyinfo`, `/proc/pagetypeinfo`); and kernel thread CPU (`khugepaged`, `ksmd`) plus KSM profit
 
 All subsystems are independently enabled/disabled and degrade gracefully if one fails to start.
 
@@ -38,7 +38,9 @@ KVM (hypervisor) ◄───────── KVM: exits, hypercalls, tlb_flus
 
 When diagnosing latency, compare metrics across layers: if QMP latency is high but eBPF block latency is low, the bottleneck is in the virtio/QEMU layer. If both are high, the problem is in the storage backend. If guest-side (QGA) latency is high but QMP latency is low, queuing is building up inside the guest.
 
-VMI-level metrics use the `kubevirt_vmi_storage_*` prefix; exporter-scoped operational and eBPF metrics use the `kme_*` prefix.
+For memory and THP, see [THP and node memory readiness](#thp-and-node-memory-readiness) and the cgroup metrics below.
+
+VMI-level storage and KVM metrics use the `kubevirt_vmi_*` prefix. Per-VMI cgroup memory from this exporter uses `container_memory_*` (CRI-O-aligned). Exporter operational, eBPF, and node buddy metrics use `kme_*`.
 
 ### QMP metrics
 
@@ -49,6 +51,8 @@ VMI-level metrics use the `kubevirt_vmi_storage_*` prefix; exporter-scoped opera
 | `kubevirt_vmi_storage_queue_size` | gauge | namespace, name, node, disk, persistentvolumeclaim, queue, bus | Capacity (max descriptors) of a storage virtqueue (see queue_inuse for label semantics) |
 | `kme_qmp_scrape_errors_total` | counter | | Errors during QMP poll cycles |
 | `kme_qmp_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last QMP poll |
+
+The `bus` label distinguishes `virtio` (per-disk virtio-blk devices) from `scsi` (shared virtio-scsi controller). For virtio-scsi, `disk` and `persistentvolumeclaim` are empty because the virtqueues belong to the shared controller rather than any individual disk.
 
 ### QGA metrics (guest-side, Windows)
 
@@ -120,7 +124,9 @@ Per-node kernel thread and KSM metrics:
 | `kme_cgroup_scrape_errors_total` | counter | | Errors during cgroup poll cycles |
 | `kme_cgroup_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last cgroup poll |
 
-Memory metrics are read from the cgroup v2 `memory.stat` file of each QEMU process. The `container_memory_*` naming aligns with the CRI-O proposal to allow future migration when CRI-O exposes these natively. The `kme_*` prefix is used for exporter-specific kernel thread metrics. The `node_ksmd_*` naming aligns with the node_exporter proposal.
+Per-VMI gauges come from cgroup v2 `memory.stat` on each QEMU process. Node buddy, pagetype, and vmstat THP counters come from host `/proc` (Normal zone, per NUMA node). The `container_memory_*` naming aligns with the [CRI-O cgroup memory proposal](https://github.com/cri-o/cri-o/pull/10143); `node_ksmd_general_profit_bytes` aligns with [node_exporter PR #3778](https://github.com/prometheus/node_exporter/pull/3778).
+
+VM resident and domain memory (`kubevirt_vmi_memory_resident_bytes`, `kubevirt_vmi_memory_domain_bytes`) are scraped from virt-handler / KubeVirt, not from this exporter — see the dashboard and [THP and node memory readiness](#thp-and-node-memory-readiness) sections for how those metrics are used alongside KME cgroup and buddy gauges.
 
 ### Example PromQL
 
@@ -147,9 +153,135 @@ histogram_quantile(0.99,
 )
 ```
 
-See [`docs/example-queries.md`](docs/example-queries.md) for a full per-metric query reference.
+See [`docs/example-queries.md`](docs/example-queries.md) for a full per-metric query reference (storage, KVM, and exporter health). Memory and THP dashboard interpretation is in [THP and node memory readiness](#thp-and-node-memory-readiness) below.
 
-The `bus` label distinguishes `virtio` (per-disk virtio-blk devices) from `scsi` (shared virtio-scsi controller). For virtio-scsi, `disk` and `persistentvolumeclaim` are empty because the virtqueues belong to the shared controller rather than any individual disk.
+## THP and node memory readiness
+
+This section explains what the cgroup memory metrics above and the **KubeVirt VM Memory** Perses dashboard (`deploy/openshift/dashboard-memory.yaml`) represent, how they relate to the kernel memory manager, and how to interpret trends.
+
+### Background: transparent huge pages (THP)
+
+On typical x86-64 hosts (4 KiB base page size), **PMD-sized THP uses 2 MiB pages** (buddy **order 9**; each order *o* spans `4096 × 2^o` bytes per block). The kernel can promote anonymous and shmem mappings to THP and demote them again under pressure. Unless THP is fully disabled, the **`khugepaged`** kernel thread scans memory and attempts to **collapse** eligible small pages into huge pages. Policy (`always`, `madvise`, `never`, per-size controls on recent kernels) is described in the [Transparent Hugepage Support](https://docs.kernel.org/admin-guide/mm/transhuge.html) admin guide.
+
+THP observability splits naturally into two questions:
+
+1. **Guest / VM:** How much memory is **already** huge-backed?
+2. **Node:** How much **free physical stock** can still support new 2 MiB allocations or khugepaged collapse on a given NUMA node?
+
+The dashboard and KME metrics address both.
+
+### Kernel sources
+
+| Source | What it reports | Used for |
+|--------|-----------------|----------|
+| `/proc/buddyinfo` | Free buddy **blocks** per zone and NUMA node, by **order only** (not migrate type). **Exact** block counts. | `kme_node_buddy_bytes_*` |
+| `/proc/pagetypeinfo` | Same free-block shape, split by **migrate type** (Movable, Unmovable, Reclaimable, Isolate, …). Counts can be **capped** (e.g. `>100000`) when the kernel avoids long zone-lock holds. | `kme_node_unmovable_bytes_*`; input to movable derivation |
+| cgroup v2 `memory.stat` | Per-QEMU `anon_thp`, `shmem_thp`, `file_thp`, etc. | `container_memory_*_thp_bytes` |
+| `/proc/vmstat` | Node counters `thp_split_pmd`, `thp_collapse_alloc` | `kme_node_thp_*_total` |
+| virt-handler metrics | libvirt `dommemstat` RSS and balloon/domain size | `kubevirt_vmi_memory_resident_bytes`, `kubevirt_vmi_memory_domain_bytes` |
+
+**Buddyinfo vs pagetypeinfo:** Buddyinfo answers “how much free memory exists at each block size?” Pagetypeinfo answers the same question but splits counts by **migrate type** — the kernel’s label for whether free pages in a page block can be relocated during compaction, migration, or hugepage grouping:
+
+| Migrate type | Typical meaning |
+|--------------|-----------------|
+| **Movable** | Can be migrated/compacted; preferred for user allocations and THP grouping. |
+| **Unmovable** | Pinned on the freelist (kernel structures, some DMA-related stock, etc.); not available for collapse as movable stock. |
+| **Reclaimable** | File-backed pages on the freelist that can be reclaimed (metadata/cache) before reuse. |
+| **Isolate** | Isolated blocks (debug/testing); treated like unmovable for THP readiness math in KME. |
+| **Reserve** | Reserved for future movable use; not reported by KME. |
+
+The kernel keeps migrate types separated within page blocks to limit fragmentation under mixed workloads.
+
+KME reports **Normal zone only** (where most anonymous VM memory and THP activity live). Values are labeled by Kubernetes **node** name and **NUMA** node id from buddyinfo/pagetypeinfo.
+
+### How KME derives buddy metrics
+
+```
+buddy (exact)          ← /proc/buddyinfo Normal zone
+unmovable (+ isolate)  ← /proc/pagetypeinfo Normal zone (Unmovable and Isolate lines)
+movable-capable        ← buddy − unmovable − isolate   (per NUMA, clamped at 0)
+```
+
+Exported gauges:
+
+| Metric | Meaning |
+|--------|---------|
+| `kme_node_buddy_bytes_order_ge_9` / `_all_orders` | Total free buddy memory (all migrate types combined). |
+| `kme_node_unmovable_bytes_order_ge_9` / `_all_orders` | Free buddy memory on the **Unmovable** migrate type only. |
+| `kme_node_movable_bytes_order_ge_9` / `_all_orders` | **Movable-capable** free buddy: buddy minus Unmovable and Isolate freelist pages. |
+
+**Important:** `movable-capable` is **not** the pagetypeinfo “Movable” line. Buddy total includes **Reclaimable** (and other) freelist pages that are not Unmovable or Isolate; those remain in buddy and are counted in `movable-capable` because only Unmovable and Isolate are subtracted. In practice, `movable-capable` is often **above** the pagetype Movable line at the same NUMA node; the gap is largely **reclaimable freelist** memory (and any other migrate types except Isolate).
+
+**Why both `order_ge_9` and `all_orders` for unmovable?** They measure different things:
+
+- **`unmovable_bytes_order_ge_9`** — free Unmovable blocks at order ≥ 9 (2 MiB+). This is the portion of **THP-sized** free buddy that cannot be used for collapse. It is required internally to compute `movable_bytes_order_ge_9` and is useful for alerts/debugging (“how much 2 MiB-class free stock is pinned unmovable?”).
+- **`unmovable_bytes_all_orders`** — all free Unmovable blocks (orders 0–10). Most unmovable free memory usually sits in **small** orders; this line shows total pinned freelist footprint but does **not** substitute for ge9 when assessing immediate THP readiness.
+
+The **KubeVirt VM Memory** dashboard plots **unmovable total** (`_all_orders`) plus ge9 movable-capable lines; it does not plot `unmovable_bytes_order_ge_9` separately because the gap `buddy_ge9 − movable_ge9` already reflects unmovable (and small reclaimable) stock at 2 MiB orders.
+
+### Dashboard panels
+
+**VM Memory**
+
+| Panel | PromQL idea | Interpretation |
+|-------|-------------|----------------|
+| **THP / Resident** | `(anon_thp + shmem_thp) / resident × 100` | Share of **RSS** already backed by THP. Rising → more guest RAM in huge pages (successful collapse or huge-friendly allocation). Low → mostly 4 KiB pages. Denominator is libvirt RSS (`kubevirt_vmi_memory_resident_bytes`), numerator from QEMU cgroup `memory.stat`. |
+| **Resident / Configured** | `resident / domain_bytes × 100` | Share of **ballooned domain size** actually resident. Context for memory footprint, not THP-specific. Low ratio with a large balloon means much “configured” memory is not in RAM. |
+
+**Node — THP readiness (Normal zone, per NUMA)**
+
+| Line | Metric | Interpretation |
+|------|--------|----------------|
+| **≥2 MiB movable-capable** | `movable_bytes_order_ge_9` | Best single **supply** signal: free 2 MiB-class buddy stock that is movable-capable on that NUMA node. |
+| **movable-capable total** | `movable_bytes_all_orders` | All-order movable-capable freelist (includes small fragments that may coalesce). |
+| **buddy free total** | `buddy_bytes_all_orders` | Raw buddy upper bound (includes reclaimable/unmovable free pages). |
+| **unmovable total** | `unmovable_bytes_all_orders` | Total free Unmovable buddy (mostly small orders). |
+| **MemAvailable** (dashed) | `node_memory_MemAvailable_bytes` | **Node-wide** reclaimable-memory estimate from node-exporter. Not per-NUMA and not buddy stock; often **much larger** than buddy free because it includes reclaimable cache. Use for overall pressure context, not as “2 MiB THP pool size.” |
+
+**Node — khugepaged & ksmd CPU**
+
+`100 × rate(cpu_seconds_total[interval])` → approximate **% of one CPU core**.
+
+- **khugepaged** — THP collapse / scanning activity. Bursts are normal when memory is being collapsed; sustained high rates under load warrant checking split vs collapse counters.
+- **ksmd** — Kernel Samepage Merging (separate from THP). High ksmd CPU means active page merging; it competes for CPU but is not the same mechanism as THP.
+
+**Node — THP split & collapse**
+
+`60 × rate(vmstat_counter[interval])` → events **per minute**.
+
+- **`thp_split_pmd`** — THPs split back to smaller pages (unmap, protection changes, pressure, fragmentation management).
+- **`thp_collapse_alloc`** — Successful collapses by khugepaged.
+
+Counters are **lifetime** totals; the dashboard shows **recent rate**. Near-zero rates mean a quiet window, not disabled THP. Rising splits with flat collapses suggest THP churn or pressure.
+
+### Reading trends together
+
+| Pattern | Likely meaning |
+|---------|----------------|
+| movable ge9 ↑ | More immediate 2 MiB-capable free stock on that NUMA node. |
+| movable ge9 ↓ while VM resident ↑ | Guest RAM growing faster than 2 MiB free stock replenishes; new THP formation may slow. |
+| unmovable ge9 ↑ (or large `buddy_ge9 − movable_ge9`) | More THP-sized free memory is **not** movable-capable. |
+| collapse_alloc rate ↑ | khugepaged actively forming THPs. |
+| split_pmd rate ↑, collapse flat | THPs being torn down faster than formed — check pressure, mapping churn, or policy. |
+| VM THP/Resident ↑ | Guest using more huge-backed RAM. |
+| VM THP/Resident low, movable ge9 high | THP opportunity not yet taken (policy, workload, or khugepaged not needed yet). |
+| MemAvailable high, movable ge9 low | Common: plenty of reclaimable cache globally, but **buddy freelist** at 2 MiB orders is still tight. |
+
+### Caveats and limitations
+
+- **Pagetype saturation:** Fields like `>100000` in pagetypeinfo are a **floor**, not an exact count. Affected orders in unmovable/movable derivations can be **undercounted**; buddyinfo totals at the same order remain exact. Prefer buddy ge9 for exact 2 MiB **total** free; treat pagetype-derived unmovable at saturated orders as approximate.
+- **Order 0:** Pagetype per-order sums can diverge from buddyinfo at **order 0** on some kernels; orders **8–10** typically align. Rely on **ge9** lines for THP-sized conclusions.
+- **Reclaimable freelist:** `movable-capable` subtracts only Unmovable and Isolate; **Reclaimable** free buddy pages remain in the residual. That makes `movable-capable` larger than the pagetype Movable line and can include pages that are not as readily usable for collapse as strictly Movable stock.
+- **Isolate migrate type:** Subtracted in movable-capable math but not included in the exported `unmovable_*` gauges (only the Unmovable line is exported as unmovable).
+- **Resident vs cgroup anon:** RSS and cgroup `anon` are related but not identical; small gaps in THP/Resident are expected.
+- **Scope:** Buddy/pagetype metrics describe **free** Normal-zone buddy pages per NUMA node, not used memory, not DMA32/HighMem zones, and not hugetlbfs pools.
+- **Policy:** Metrics show stock and activity, not sysfs THP policy (`/sys/kernel/mm/transparent_hugepage/…`). Low VM THP with `never` or without `MADV_HUGEPAGE` is expected regardless of movable ge9.
+
+### Further reading
+
+- [Transparent Hugepage Support](https://docs.kernel.org/admin-guide/mm/transhuge.html) — THP policies, khugepaged, sysfs and boot parameters.
+- [Memory management documentation index](https://docs.kernel.org/admin-guide/mm/index.html) — broader MM admin topics.
+- [CRI-O cgroup memory metrics proposal](https://github.com/cri-o/cri-o/pull/10143) — alignment of `container_memory_*` naming.
 
 ## Configuration
 
@@ -163,7 +295,7 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 | `--log-level` | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `--boundaries` | `BOUNDARIES` | `10000000,100000000,1000000000` | Histogram bucket boundaries in nanoseconds |
 | | `NODE_NAME` | (required) | Node name, typically from downward API |
-| `--namespaces` | `NAMESPACES` | (all) | Comma-separated namespace filter (applies to both QMP and eBPF) |
+| `--namespaces` | `NAMESPACES` | (all) | Comma-separated namespace filter (QMP, QGA, and eBPF) |
 | `--cri-socket` | `CRI_SOCKET` | `/run/crio/crio.sock` | CRI socket path for container discovery (shared by QMP and QGA) |
 
 ### QMP
@@ -312,9 +444,9 @@ The OpenShift variant includes SecurityContextConstraints, worker node selector,
 
 | Capability | Reason |
 |-----------|--------|
-| `hostPID` | Access VM virtqemud sockets via `/proc/<pid>/root/` |
+| `hostPID` | Access VM virtqemud sockets via `/proc/<pid>/root/`; read host `/proc/buddyinfo`, `/proc/pagetypeinfo`, and `/proc/vmstat` for node memory metrics |
 | `SYS_PTRACE` | Traverse `/proc/<pid>/root/` of other containers |
-| `DAC_OVERRIDE` | Connect to virtqemud socket owned by qemu UID |
+| `DAC_OVERRIDE` | Connect to virtqemud socket owned by qemu UID; read host proc nodes that restrict unprivileged access |
 | `BPF` | Load and attach eBPF programs |
 | `PERFMON` | Attach to kernel tracepoints and kprobes |
 | `SYS_RESOURCE` | Increase eBPF map memory limits |
