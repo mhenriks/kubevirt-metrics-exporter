@@ -9,6 +9,7 @@ resources:
 - scc-clusterrolebinding.yaml
 - datasource.yaml
 - dashboard.yaml
+- dashboard-memory.yaml
 patches:
 - patch: |
     apiVersion: apps/v1

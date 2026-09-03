@@ -238,6 +238,224 @@ var _ = Describe("readKSMGeneralProfit", func() {
 	})
 })
 
+var _ = Describe("readVMStatTHP", func() {
+	var procRoot string
+
+	BeforeEach(func() {
+		procRoot = GinkgoT().TempDir()
+	})
+
+	It("parses thp_split_pmd and thp_collapse_alloc", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "vmstat"), []byte(
+			"nr_free_pages 100\n"+
+				"thp_split_pmd 42\n"+
+				"thp_collapse_alloc 99\n",
+		), 0644)).To(Succeed())
+
+		stat, err := readVMStatTHP(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stat.splitPMD).To(Equal(uint64(42)))
+		Expect(stat.collapseAlloc).To(Equal(uint64(99)))
+	})
+
+	It("returns error when THP keys are missing", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "vmstat"), []byte("nr_free_pages 1\n"), 0644)).To(Succeed())
+		_, err := readVMStatTHP(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns error when vmstat is missing", func() {
+		_, err := readVMStatTHP(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("parses when only thp_split_pmd is present", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "vmstat"), []byte("thp_split_pmd 7\n"), 0644)).To(Succeed())
+
+		stat, err := readVMStatTHP(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stat.splitPMD).To(Equal(uint64(7)))
+		Expect(stat.collapseAlloc).To(Equal(uint64(0)))
+	})
+})
+
+var _ = Describe("readBuddyNormal", func() {
+	var procRoot string
+
+	BeforeEach(func() {
+		procRoot = GinkgoT().TempDir()
+	})
+
+	It("parses Normal zone free blocks per NUMA node", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "buddyinfo"), []byte(
+			"Node 0, zone      DMA      0      0      0\n"+
+				"Node 0, zone   Normal      1      0      0      0      0      0      0      0      0      1      0\n"+
+				"Node 1, zone   Normal      0      0      0      0      0      0      0      0      0      2      0\n",
+		), 0644)).To(Succeed())
+
+		results, err := readBuddyNormal(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(results).To(HaveLen(2))
+
+		order9Bytes := uint64(4096 * 512)
+		Expect(results[0].NUMA).To(Equal("0"))
+		Expect(results[0].OrderGe9Bytes).To(Equal(order9Bytes))
+		Expect(results[0].AllOrdersBytes).To(Equal(uint64(4096) + order9Bytes))
+
+		Expect(results[1].NUMA).To(Equal("1"))
+		Expect(results[1].OrderGe9Bytes).To(Equal(2 * order9Bytes))
+		Expect(results[1].AllOrdersBytes).To(Equal(2 * order9Bytes))
+	})
+
+	It("returns error when Normal entries are missing", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "buddyinfo"), []byte(
+			"Node 0, zone      DMA      1\n",
+		), 0644)).To(Succeed())
+
+		_, err := readBuddyNormal(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+})
+
+var _ = Describe("readPagetypeExcludedNormal", func() {
+	var procRoot string
+
+	BeforeEach(func() {
+		procRoot = GinkgoT().TempDir()
+	})
+
+	It("parses unmovable and isolate Normal zone free pages per NUMA node", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Page block order: 9\n"+
+				"Pages per block: 512\n\n"+
+				"Free pages count per migrate type at order       0      1      2      3      4      5      6      7      8      9     10\n"+
+				"Node 0, zone   Normal, type Unmovable      2      0      0      0      0      0      0      0      0      1      0\n"+
+				"Node 0, zone   Normal, type      Isolate      0      0      0      0      0      0      0      0      0      0      1\n"+
+				"Node 1, zone   Normal, type Unmovable      0      0      0      0      0      0      0      0      0      0      2\n"+
+				"Number of blocks type    Unmovable Reclaimable Movable Reserve Isolate\n",
+		), 0644)).To(Succeed())
+
+		results, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(results).To(HaveLen(2))
+
+		order9Bytes := uint64(4096 * 512)
+		order10Bytes := uint64(pagetypePageSize) << 10
+		Expect(results[0].NUMA).To(Equal("0"))
+		Expect(results[0].UnmovableOrderGe9Bytes).To(Equal(order9Bytes))
+		Expect(results[0].IsolateOrderGe9Bytes).To(Equal(order10Bytes))
+		Expect(results[0].excludedOrderGe9Bytes()).To(Equal(order9Bytes + order10Bytes))
+		Expect(results[0].UnmovableAllOrdersBytes).To(Equal(uint64(2*4096) + order9Bytes))
+		Expect(results[0].excludedAllOrdersBytes()).To(Equal(uint64(2*4096) + order9Bytes + order10Bytes))
+
+		Expect(results[1].NUMA).To(Equal("1"))
+		Expect(results[1].UnmovableOrderGe9Bytes).To(Equal(2 * order10Bytes))
+		Expect(results[1].excludedOrderGe9Bytes()).To(Equal(2 * order10Bytes))
+	})
+
+	It("returns error when Normal entries are missing", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Free pages count per migrate type at order       0\n"+
+				"Node 0, zone      DMA, type   Movable      0\n",
+		), 0644)).To(Succeed())
+
+		_, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns error when pagetypeinfo is missing", func() {
+		_, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns error on invalid page count", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Free pages count per migrate type at order       0\n"+
+				"Node 0, zone   Normal, type Unmovable      bad\n",
+		), 0644)).To(Succeed())
+
+		_, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("caps saturated unmovable page counts at the pagetype ceiling for graphs", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Free pages count per migrate type at order       0      1      2      3      4      5      6      7      8      9     10\n"+
+				"Node 0, zone   Normal, type Unmovable      0 >100000 >100000      0      0      0      0      0      0      1      0\n"+
+				"Number of blocks type    Unmovable Reclaimable Movable Reserve Isolate\n",
+		), 0644)).To(Succeed())
+
+		results, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(results).To(HaveLen(1))
+
+		order1Bytes := uint64(pagetypeSaturatedPageCeiling) * (uint64(pagetypePageSize) << 1)
+		order2Bytes := uint64(pagetypeSaturatedPageCeiling) * (uint64(pagetypePageSize) << 2)
+		order9Bytes := uint64(4096 * 512)
+		Expect(results[0].UnmovableOrderGe9Bytes).To(Equal(order9Bytes))
+		Expect(results[0].UnmovableAllOrdersBytes).To(Equal(order1Bytes + order2Bytes + order9Bytes))
+	})
+
+	It("uses the ceiling for any > prefix regardless of digits shown", func() {
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Free pages count per migrate type at order       0\n"+
+				"Node 0, zone   Normal, type Unmovable >999999\n"+
+				"Number of blocks type    Unmovable Reclaimable Movable Reserve Isolate\n",
+		), 0644)).To(Succeed())
+
+		results, err := readPagetypeExcludedNormal(procRoot)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(results).To(HaveLen(1))
+		Expect(results[0].UnmovableAllOrdersBytes).To(Equal(uint64(pagetypeSaturatedPageCeiling) * pagetypePageSize))
+	})
+})
+
+var _ = Describe("collectNodeStats", func() {
+	It("reads vmstat, pagetypeinfo, and KSM from configured roots", func() {
+		procRoot := GinkgoT().TempDir()
+		sysRoot := GinkgoT().TempDir()
+
+		Expect(os.WriteFile(filepath.Join(procRoot, "vmstat"), []byte(
+			"thp_split_pmd 11\n"+
+				"thp_collapse_alloc 22\n",
+		), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(procRoot, "buddyinfo"), []byte(
+			"Node 0, zone   Normal      1      0      0      0      0      0      0      0      0      2      0\n",
+		), 0644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(procRoot, "pagetypeinfo"), []byte(
+			"Free pages count per migrate type at order       0      1      2      3      4      5      6      7      8      9\n"+
+				"Node 0, zone   Normal, type Unmovable      2      0      0      0      0      0      0      0      0      1\n"+
+				"Number of blocks type    Unmovable Reclaimable Movable Reserve Isolate\n",
+		), 0644)).To(Succeed())
+
+		ksmDir := filepath.Join(sysRoot, "kernel", "mm", "ksm")
+		Expect(os.MkdirAll(ksmDir, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(ksmDir, "general_profit"), []byte("4096\n"), 0644)).To(Succeed())
+
+		c := &Collector{
+			cfg: Config{
+				ProcPath: procRoot,
+				SysPath:  sysRoot,
+			},
+			log: slog.Default(),
+		}
+
+		ns := c.collectNodeStats()
+		Expect(ns.thpVMStatAvailable).To(BeTrue())
+		Expect(ns.thpSplitPMD).To(Equal(uint64(11)))
+		Expect(ns.thpCollapseAlloc).To(Equal(uint64(22)))
+		Expect(ns.buddyAvailable).To(BeTrue())
+		Expect(ns.buddyByNuma).To(HaveLen(1))
+		Expect(ns.buddyByNuma[0].OrderGe9Bytes).To(Equal(uint64(2 * 4096 * 512)))
+		Expect(ns.pagetypeAvailable).To(BeTrue())
+		Expect(ns.excludedByNuma).To(HaveLen(1))
+		Expect(ns.excludedByNuma[0].UnmovableOrderGe9Bytes).To(Equal(uint64(4096 * 512)))
+		Expect(ns.excludedByNuma[0].UnmovableAllOrdersBytes).To(Equal(uint64(2*4096) + uint64(4096*512)))
+		Expect(ns.ksmProfitAvailable).To(BeTrue())
+		Expect(ns.ksmProfit).To(Equal(int64(4096)))
+	})
+})
+
 var _ = Describe("Collector end-to-end (synthetic)", func() {
 	It("emits all VMI memory metrics with correct labels and values", func() {
 		store := fakePodStore(virtLauncherPod("testns", "myvm", "virt-launcher-myvm-abc"))
@@ -319,6 +537,17 @@ var _ = Describe("Collector end-to-end (synthetic)", func() {
 			ksmdAvailable:      true,
 			ksmProfit:          1044480,
 			ksmProfitAvailable: true,
+			thpSplitPMD:        100,
+			thpCollapseAlloc:   200,
+			thpVMStatAvailable: true,
+			buddyByNuma: []numaBuddyFree{
+				{NUMA: "0", OrderGe9Bytes: 6299648, AllOrdersBytes: 6303744},
+			},
+			buddyAvailable: true,
+			excludedByNuma: []numaPagetypeExcluded{
+				{NUMA: "0", UnmovableOrderGe9Bytes: 8192, UnmovableAllOrdersBytes: 8192},
+			},
+			pagetypeAvailable: true,
 		}
 		c.lastPollTS = 1000
 		c.mu.Unlock()
@@ -341,6 +570,45 @@ var _ = Describe("Collector end-to-end (synthetic)", func() {
 		m = metrics["node_ksmd_general_profit_bytes"]
 		Expect(m).To(HaveLen(1))
 		Expect(m[0].Gauge.GetValue()).To(Equal(float64(1044480)))
+
+		By("checking vmstat THP counters")
+		m = metrics["kme_node_thp_split_pmd_total"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Counter.GetValue()).To(Equal(float64(100)))
+		checkLabels(m[0], map[string]string{"node": "node1"})
+
+		m = metrics["kme_node_thp_collapse_alloc_total"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Counter.GetValue()).To(Equal(float64(200)))
+		checkLabels(m[0], map[string]string{"node": "node1"})
+
+		By("checking buddy and unmovable pagetype bytes")
+		m = metrics["kme_node_buddy_bytes_order_ge_9"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(6299648)))
+		checkLabels(m[0], map[string]string{"node": "node1", "numa": "0"})
+
+		m = metrics["kme_node_buddy_bytes_all_orders"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(6303744)))
+
+		m = metrics["kme_node_unmovable_bytes_order_ge_9"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(8192)))
+
+		m = metrics["kme_node_unmovable_bytes_all_orders"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(8192)))
+
+		By("checking derived movable bytes")
+		m = metrics["kme_node_movable_bytes_order_ge_9"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(6291456)))
+		checkLabels(m[0], map[string]string{"node": "node1", "numa": "0"})
+
+		m = metrics["kme_node_movable_bytes_all_orders"]
+		Expect(m).To(HaveLen(1))
+		Expect(m[0].Gauge.GetValue()).To(Equal(float64(6295552)))
 	})
 
 	It("omits node metrics when kernel threads are not available", func() {
@@ -357,6 +625,9 @@ var _ = Describe("Collector end-to-end (synthetic)", func() {
 			khugepageAvailable: false,
 			ksmdAvailable:      false,
 			ksmProfitAvailable: false,
+			thpVMStatAvailable: false,
+			buddyAvailable:     false,
+			pagetypeAvailable:  false,
 		}
 		c.lastPollTS = 1000
 		c.mu.Unlock()
@@ -366,6 +637,12 @@ var _ = Describe("Collector end-to-end (synthetic)", func() {
 		Expect(metrics["kme_cgroup_khugepaged_cpu_seconds_total"]).To(BeEmpty())
 		Expect(metrics["kme_cgroup_ksmd_cpu_seconds_total"]).To(BeEmpty())
 		Expect(metrics["node_ksmd_general_profit_bytes"]).To(BeEmpty())
+		Expect(metrics["kme_node_thp_split_pmd_total"]).To(BeEmpty())
+		Expect(metrics["kme_node_thp_collapse_alloc_total"]).To(BeEmpty())
+		Expect(metrics["kme_node_buddy_bytes_order_ge_9"]).To(BeEmpty())
+		Expect(metrics["kme_node_buddy_bytes_all_orders"]).To(BeEmpty())
+		Expect(metrics["kme_node_unmovable_bytes_order_ge_9"]).To(BeEmpty())
+		Expect(metrics["kme_node_unmovable_bytes_all_orders"]).To(BeEmpty())
 	})
 
 	It("emits metrics for multiple VMIs", func() {
