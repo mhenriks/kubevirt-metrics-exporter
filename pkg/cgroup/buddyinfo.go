@@ -13,9 +13,9 @@ const buddyPageSize = 4096
 
 // numaBuddyFree holds exact free buddy block counts for the Normal zone per NUMA node.
 type numaBuddyFree struct {
-	NUMA              string
-	OrderGe9Bytes     uint64
-	AllOrdersBytes    uint64
+	NUMA           string
+	OrderGe9Bytes  uint64
+	AllOrdersBytes uint64
 }
 
 // readBuddyNormal parses /proc/buddyinfo free block counts for the Normal zone per NUMA node.
