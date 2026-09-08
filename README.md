@@ -225,8 +225,8 @@ The **KubeVirt VM Memory** dashboard plots **unmovable total** (`_all_orders`) p
 
 | Panel | PromQL idea | Interpretation |
 |-------|-------------|----------------|
-| **THP / Resident** | `(anon_thp + shmem_thp) / resident × 100` | Share of **RSS** already backed by THP. Rising → more guest RAM in huge pages (successful collapse or huge-friendly allocation). Low → mostly 4 KiB pages. Denominator is libvirt RSS (`kubevirt_vmi_memory_resident_bytes`), numerator from QEMU cgroup `memory.stat`. |
-| **Resident / Configured** | `resident / domain_bytes × 100` | Share of **ballooned domain size** actually resident. Context for memory footprint, not THP-specific. Low ratio with a large balloon means much “configured” memory is not in RAM. |
+| **THP / Resident** | `(anon_thp + shmem_thp) / resident × 100` (join `on(namespace, name, node)`; resident filtered with `kubevirt_vmi_info{phase="running"}`) | Share of **RSS** already backed by THP. Rising → more guest RAM in huge pages (successful collapse or huge-friendly allocation). Low → mostly 4 KiB pages. Denominator is libvirt RSS (`kubevirt_vmi_memory_resident_bytes`), numerator from QEMU cgroup `memory.stat`. |
+| **Resident / Configured** | `resident / domain_bytes × 100` (same `node` join and `kubevirt_vmi_info` running filter) | Share of **ballooned domain size** actually resident. Context for memory footprint, not THP-specific. Low ratio with a large balloon means much “configured” memory is not in RAM. |
 
 **Node — THP readiness (Normal zone, per NUMA)**
 
