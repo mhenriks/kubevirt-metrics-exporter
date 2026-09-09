@@ -140,7 +140,7 @@ spec:
                     datasource:
                       kind: PrometheusDatasource
                       name: thanos-querier
-                    query: '100 * (container_memory_anon_thp_bytes{job="kubevirt-metrics-exporter", node=~"$node", namespace=~"$namespace", name=~"$vmi"} + container_memory_shmem_thp_bytes{job="kubevirt-metrics-exporter", node=~"$node", namespace=~"$namespace", name=~"$vmi"}) / on(namespace, name) group_left() kubevirt_vmi_memory_resident_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"}'
+                    query: '100 * (container_memory_anon_thp_bytes{job="kubevirt-metrics-exporter", node=~"$node", namespace=~"$namespace", name=~"$vmi"} + container_memory_shmem_thp_bytes{job="kubevirt-metrics-exporter", node=~"$node", namespace=~"$namespace", name=~"$vmi"}) / on(namespace, name, node) group_left() (kubevirt_vmi_memory_resident_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"} and on(namespace, name, node) kubevirt_vmi_info{phase="running", node=~"$node", namespace=~"$namespace", name=~"$vmi"})'
                     minStep: "30s"
                     seriesNameFormat: "{{name}}"
 
@@ -169,7 +169,7 @@ spec:
                     datasource:
                       kind: PrometheusDatasource
                       name: thanos-querier
-                    query: '100 * kubevirt_vmi_memory_resident_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"} / kubevirt_vmi_memory_domain_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"}'
+                    query: '100 * (kubevirt_vmi_memory_resident_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"} and on(namespace, name, node) kubevirt_vmi_info{phase="running", node=~"$node", namespace=~"$namespace", name=~"$vmi"}) / on(namespace, name, node) group_left() (kubevirt_vmi_memory_domain_bytes{node=~"$node", namespace=~"$namespace", name=~"$vmi"} and on(namespace, name, node) kubevirt_vmi_info{phase="running", node=~"$node", namespace=~"$namespace", name=~"$vmi"})'
                     minStep: "30s"
                     seriesNameFormat: "{{name}}"
 
