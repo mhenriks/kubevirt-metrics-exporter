@@ -1,3 +1,6 @@
+// Copyright 2026 The KubeVirt Metrics Exporter Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package ebpf
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" -target amd64,arm64,s390x -type block_hist_key -type hist block ../../bpf/block_latency.c -- -I../../bpf/headers

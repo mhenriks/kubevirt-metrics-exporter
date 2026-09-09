@@ -1,3 +1,6 @@
+// Copyright 2026 The KubeVirt Metrics Exporter Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package vmi provides helpers shared by collectors that map host-level
 // observations (PIDs, cgroup paths, debugfs entries) back to KubeVirt VMIs.
 package vmi

@@ -1,3 +1,6 @@
+// Copyright 2026 The KubeVirt Metrics Exporter Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package qga
 
 import "github.com/prometheus/client_golang/prometheus"
