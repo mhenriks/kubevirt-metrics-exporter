@@ -15,12 +15,17 @@ import (
 
 type Config struct {
 	// Shared
-	ListenAddress string
-	LogLevel      string
-	NodeName      string
-	Namespaces    string
-	Boundaries    []float64
-	BoundariesNs  []int64
+	ListenAddress   string
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientCAFile string
+	TLSMinVersion   string
+	TLSCipherSuites string
+	LogLevel        string
+	NodeName        string
+	Namespaces      string
+	Boundaries      []float64
+	BoundariesNs    []int64
 
 	// CRI (shared by QMP and QGA)
 	CRISocket string
@@ -67,6 +72,11 @@ func Parse() *Config {
 
 	// Shared flags
 	flag.StringVar(&c.ListenAddress, "listen-address", envOrDefault("LISTEN_ADDRESS", ":8080"), "Address to listen on for metrics")
+	flag.StringVar(&c.TLSCertFile, "tls-cert-file", envOrDefault("TLS_CERT_FILE", ""), "TLS serving certificate file (enables HTTPS when set with --tls-key-file)")
+	flag.StringVar(&c.TLSKeyFile, "tls-key-file", envOrDefault("TLS_KEY_FILE", ""), "TLS serving key file (enables HTTPS when set with --tls-cert-file)")
+	flag.StringVar(&c.TLSClientCAFile, "tls-client-ca-file", envOrDefault("TLS_CLIENT_CA_FILE", ""), "PEM CA bundle used to verify metrics client certificates (optional; otherwise OpenShift's authoritative client CA is used)")
+	flag.StringVar(&c.TLSMinVersion, "tls-min-version", envOrDefault("TLS_MIN_VERSION", "VersionTLS12"), "Minimum TLS version (VersionTLS10, VersionTLS11, VersionTLS12, or VersionTLS13)")
+	flag.StringVar(&c.TLSCipherSuites, "tls-cipher-suites", envOrDefault("TLS_CIPHER_SUITES", ""), "Comma-separated cipher names from an OpenShift TLS profile (OpenSSL format, e.g. ECDHE-ECDSA-AES128-GCM-SHA256); TLS 1.3 suites are configured by Go")
 	flag.StringVar(&c.LogLevel, "log-level", envOrDefault("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 	flag.StringVar(&boundariesStr, "boundaries", envOrDefault("BOUNDARIES", "10000000,100000000,1000000000"), "Histogram bucket boundaries in nanoseconds (comma-separated)")
 	flag.StringVar(&c.Namespaces, "namespaces", envOrDefault("NAMESPACES", ""), "Comma-separated list of namespaces to monitor (empty = all)")
@@ -121,6 +131,9 @@ func Parse() *Config {
 }
 
 func (c *Config) Validate() error {
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return fmt.Errorf("tls-cert-file and tls-key-file must be set together")
+	}
 	if c.NodeName == "" {
 		return fmt.Errorf("NODE_NAME environment variable is required")
 	}
