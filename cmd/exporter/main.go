@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/device"
 	bpf "github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/ebpf"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/kvm"
+	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/metricstls"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/qga"
 	"github.com/openshift-virtualization/kubevirt-metrics-exporter/pkg/qmp"
 )
@@ -85,7 +87,31 @@ func main() {
 		fmt.Fprint(w, "ok")
 	})
 
-	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
+	var tlsConfig *tls.Config
+	if cfg.TLSCertFile != "" {
+		var pool *metricstls.ClientCAPool
+		var err error
+		if cfg.TLSClientCAFile != "" {
+			pool, err = metricstls.LoadClientCAFile(cfg.TLSClientCAFile)
+		} else {
+			pool, err = metricstls.StartClientCAWatcher(ctx, stores.clientset)
+		}
+		if err != nil {
+			slog.Error("configure metrics mTLS", "error", err)
+			os.Exit(1)
+		}
+		tlsConfig, err = metricstls.ServerConfig(cfg.TLSCertFile, cfg.TLSKeyFile, pool, cfg.TLSMinVersion, cfg.TLSCipherSuites)
+		if err != nil {
+			slog.Error("configure metrics TLS policy", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	var handler http.Handler = mux
+	if tlsConfig != nil {
+		handler = metricstls.AllowPrometheusK8s(handler)
+	}
+	srv := &http.Server{Addr: cfg.ListenAddress, Handler: handler, TLSConfig: tlsConfig}
 
 	go func() {
 		<-ctx.Done()
@@ -94,9 +120,15 @@ func main() {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	slog.Info("metrics server starting", "address", cfg.ListenAddress)
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		slog.Error("server error", "error", err)
+	slog.Info("metrics server starting", "address", cfg.ListenAddress, "tls", tlsConfig != nil)
+	var serveErr error
+	if tlsConfig != nil {
+		serveErr = srv.ListenAndServeTLS("", "")
+	} else {
+		serveErr = srv.ListenAndServe()
+	}
+	if serveErr != http.ErrServerClosed {
+		slog.Error("server error", "error", serveErr)
 		os.Exit(1)
 	}
 }
@@ -105,6 +137,7 @@ type informerStores struct {
 	podStore   cache.Store
 	pvcIndexer cache.Indexer
 	dynClient  dynamic.Interface
+	clientset  kubernetes.Interface
 }
 
 func startInformers(ctx context.Context, nodeName string, log *slog.Logger) informerStores {
@@ -146,7 +179,7 @@ func startInformers(ctx context.Context, nodeName string, log *slog.Logger) info
 	pvcFactory.WaitForCacheSync(ctx.Done())
 
 	log.Info("informers synced")
-	return informerStores{podStore: podStore, pvcIndexer: pvcIndexer, dynClient: dynClient}
+	return informerStores{podStore: podStore, pvcIndexer: pvcIndexer, dynClient: dynClient, clientset: cs}
 }
 
 func startQMP(ctx context.Context, cfg *config.Config, podStore cache.Store, dynClient dynamic.Interface, log *slog.Logger) {

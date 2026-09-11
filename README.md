@@ -292,6 +292,11 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 | Flag | Env | Default | Description |
 |------|-----|---------|-------------|
 | `--listen-address` | `LISTEN_ADDRESS` | `:8080` | Metrics server listen address |
+| `--tls-cert-file` | `TLS_CERT_FILE` | _(empty)_ | TLS serving certificate; set with `TLS_KEY_FILE` to enable HTTPS and mTLS |
+| `--tls-key-file` | `TLS_KEY_FILE` | _(empty)_ | TLS serving key |
+| `--tls-client-ca-file` | `TLS_CLIENT_CA_FILE` | _(empty)_ | PEM client-CA bundle; when unset on OpenShift, uses `kube-system/extension-apiserver-authentication` |
+| `--tls-min-version` | `TLS_MIN_VERSION` | `VersionTLS12` | Minimum TLS version; Autopilot supplies the resolved OpenShift TLS profile value |
+| `--tls-cipher-suites` | `TLS_CIPHER_SUITES` | _(empty)_ | Comma-separated cipher names emitted by an OpenShift TLS profile (OpenSSL format, e.g. `ECDHE-ECDSA-AES128-GCM-SHA256`); supplied by Autopilot for a custom/profile-specific policy |
 | `--log-level` | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `--boundaries` | `BOUNDARIES` | `10000000,100000000,1000000000` | Histogram bucket boundaries in nanoseconds |
 | | `NODE_NAME` | (required) | Node name, typically from downward API |
