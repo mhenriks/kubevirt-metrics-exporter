@@ -96,7 +96,7 @@ func main() {
 			slog.Error("configure metrics mTLS", "error", err)
 			os.Exit(1)
 		}
-		tlsConfig, err = metricstls.ServerConfig(cfg.TLSCertFile, cfg.TLSKeyFile, pool, cfg.TLSMinVersion, cfg.TLSCipherSuites)
+		tlsConfig, err = metricstls.ServerConfig(cfg.TLSCertFile, cfg.TLSKeyFile, pool, cfg.TLSMinVersion, cfg.TLSCipherSuites, cfg.TLSGroups)
 		if err != nil {
 			slog.Error("configure metrics TLS policy", "error", err)
 			os.Exit(1)
