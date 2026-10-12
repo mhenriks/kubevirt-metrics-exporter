@@ -18,7 +18,7 @@ jobs:
       - name: Install eBPF build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev
+          sudo apt-get install -y clang llvm libbpf-dev prometheus python3-yaml
 
       - name: Generate eBPF bindings
         run: go generate ./pkg/ebpf/...
@@ -35,3 +35,6 @@ jobs:
 
       - name: Test
         run: go test -v -count=1 ./...
+
+      - name: Test Prometheus alert rules
+        run: make test-alert-rules
