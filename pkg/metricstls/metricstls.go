@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/library-go/pkg/crypto"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,7 +96,7 @@ func updatePool(pool *ClientCAPool, obj interface{}) {
 // minVersion and cipherSuites are intentionally supplied by the deployer: this
 // lets virt-platform-autopilot resolve the HCO/APIServer TLS profile and pass
 // its effective policy to KME without duplicating that policy logic here.
-func ServerConfig(certFile, keyFile string, pool *ClientCAPool, minVersion, cipherSuites string) (*tls.Config, error) {
+func ServerConfig(certFile, keyFile string, pool *ClientCAPool, minVersion, cipherSuites, tlsGroups string) (*tls.Config, error) {
 	minimum, err := parseMinVersion(minVersion)
 	if err != nil {
 		return nil, err
@@ -104,7 +105,12 @@ func ServerConfig(certFile, keyFile string, pool *ClientCAPool, minVersion, ciph
 	if err != nil {
 		return nil, err
 	}
-	config := &tls.Config{MinVersion: minimum, CipherSuites: ciphers}
+	curveIds, err := parseTLSGroups(tlsGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &tls.Config{MinVersion: minimum, CipherSuites: ciphers, CurvePreferences: curveIds}
 	config.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
@@ -138,7 +144,7 @@ func parseCipherSuites(value string) ([]uint16, error) {
 	// conversion and cipher registry, keeping this endpoint in lockstep with
 	// the platform profile resolver.
 	result := make([]uint16, 0)
-	for _, configuredName := range strings.Split(value, ",") {
+	for configuredName := range strings.SplitSeq(value, ",") {
 		configuredName = strings.TrimSpace(configuredName)
 		if configuredName == "" {
 			continue
@@ -157,6 +163,26 @@ func parseCipherSuites(value string) ([]uint16, error) {
 	if len(result) == 0 {
 		return nil, fmt.Errorf("TLS cipher suites must contain at least one suite")
 	}
+	return result, nil
+}
+
+func parseTLSGroups(value string) ([]tls.CurveID, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+
+	var result []tls.CurveID
+	for curveIDStr := range strings.SplitSeq(value, ",") {
+		curveIDStr = strings.TrimSpace(curveIDStr)
+
+		id, ok := crypto.TLSGroupToCurveID(configv1.TLSGroup(curveIDStr))
+		if !ok {
+			return nil, fmt.Errorf("unknown TLS group %q", curveIDStr)
+		}
+
+		result = append(result, id)
+	}
+
 	return result, nil
 }
 

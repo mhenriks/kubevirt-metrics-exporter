@@ -7,6 +7,7 @@ require (
 	github.com/digitalocean/go-libvirt v0.0.0-20260609165003-6254771e63a8
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
+	github.com/openshift/api v0.0.0-20261002101753-2d7b24ada488
 	github.com/openshift/library-go v0.0.0-20261012084302-f23ec502bed4
 	github.com/prometheus/client_golang v1.24.0
 	github.com/prometheus/client_model v0.6.2
@@ -48,7 +49,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/openshift/api v0.0.0-20261002101753-2d7b24ada488 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/common v0.70.0 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
