@@ -9,9 +9,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -33,6 +33,6 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum || (echo "Run 'go mod tidy' and commit." && exit 1)
 
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.7.2
+          version: v2.14.0
