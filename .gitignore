@@ -3,3 +3,5 @@ pkg/ebpf/*.o
 test/promtool/kme-prometheus-rules.yml
 test/promtool/kme_storage_latency_alert_tests.yml
 test/promtool/__pycache__/
+test/promtool/aggregation-*.yml
+hack/__pycache__/

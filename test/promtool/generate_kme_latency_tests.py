@@ -22,7 +22,9 @@ import pathlib
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-RULE_SOURCE = ROOT / "deploy/prometheus-rules/prometheusrule.yaml"
+# Legacy alert expectations exercise current diagnostic records with the old alerts.
+# The frozen fixture is also the replay reference.
+RULE_SOURCE = ROOT / "test/promtool/fixtures/storage-latency-before-aggregation.yaml"
 RULES_OUT = pathlib.Path(__file__).resolve().parent / "kme-prometheus-rules.yml"
 TEST_OUT = (
     pathlib.Path(__file__).resolve().parent / "kme_storage_latency_alert_tests.yml"
@@ -54,6 +56,20 @@ def gauge(value):
 def main():
     document = yaml.safe_load(RULE_SOURCE.read_text())
     groups = document["spec"]["groups"]
+    candidate = yaml.safe_load((ROOT / "deploy/prometheus-rules/prometheusrule.yaml").read_text())
+    records = {r["record"]: r for g in candidate["spec"]["groups"] for r in g["rules"] if "record" in r}
+    deployed_alerts = {r["alert"]: r for g in candidate["spec"]["groups"] for r in g["rules"] if "alert" in r}
+    unchanged_alerts = {
+        "NodeVMStorageLatencyWidespread", "VMIDiskSaturated", "KSMDCPUHigh", "KhugepagedCPUHigh",
+        "KMEQMPPollStale", "KMEQGAPollStale", "KMEQMPScrapeErrors", "KMEQGAScrapeErrors",
+        "KMEKVMPollStale", "KMEKVMScrapeErrors", "KMECgroupPollStale", "KMECgroupScrapeErrors",
+        "KMEeBPFSubsystemDown", "KMEAbsent",
+    }
+    if unchanged_alerts - deployed_alerts.keys():
+        raise SystemExit("missing deployed alerts: " + ", ".join(sorted(unchanged_alerts - deployed_alerts.keys())))
+    for group in groups:
+        group["rules"] = [records[r["record"]] if "record" in r else deployed_alerts.get(r["alert"], r) for r in group["rules"]]
+    groups[0]["rules"].insert(0, records["pvc:kme_storageclass:info"])
     individual_names = {
         "VMIStorageWriteLatencyHigh",
         "VMIStorageReadLatencyHigh",

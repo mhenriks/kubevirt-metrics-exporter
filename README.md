@@ -410,42 +410,74 @@ Overview / CPU / I/O / Memory panels query `openshift:*` recording rules (see be
 
 ## Alerting and recording rules
 
-Prometheus rules are included in `deploy/prometheus-rules/` and deployed automatically with `make deploy` / `make deploy-kubernetes`.
+Prometheus rules are included in `deploy/prometheus-rules/` and deployed automatically with `make deploy` / `make deploy-kubernetes`. The supported baseline is **OpenShift 4.20+ (Prometheus 3.5.0+)**; CI uses promtool 3.5.0.
 
 ### Alerting
 
 The alerting rules cover two areas:
 
-**Workload health** — alerts on high storage I/O latency (hypervisor-side, guest-side, and node-side) and virtqueue saturation. Individual alerts remain deployed alongside storage-class summaries:
+**Workload health** — sustained latency signals are consolidated across disks and collectors into one alert per VMI and operation. A non-VMI or unmapped workload falls back to one alert per pod and operation. A firing storage-class summary suppresses only the matching workload conditions it covers.
 
-| Alert | Severity | Condition |
-|-------|----------|-----------|
-| VMIStorageWriteLatencyHigh | warning | P99 write latency > 100ms for 10m |
-| VMIStorageReadLatencyHigh | warning | P99 read latency > 100ms for 10m |
-| VMIStorageFlushLatencyHigh | warning | P99 flush latency > 500ms for 15m |
-| NodeVMStorageLatencyWidespread | critical | >50% of active VMs on a node with P99 > 100ms for 10m |
-| VMIDiskSaturated | critical | Aggregate virtqueue occupancy > 90% for 5m |
-| VMIGuestStorageLatencyHigh | warning | Guest-side avg latency > 100ms for 15m |
-| PVCBlockLatencyHigh | warning | P99 block latency > 100ms for 10m |
-| PVCNFSLatencyHigh | warning | P99 NFS latency > 250ms for 10m |
+| Alert | Severity | Scope |
+|-------|----------|-------|
+| VMIStorageLatencyHigh | warning | VMI and operation, across QMP, guest, block and NFS signals |
+| PodStorageLatencyHigh | warning | Pod and operation when no VMI mapping is available |
+| StorageClassLatencyHigh | warning | Storage class and operation, across independently qualified sources |
+| NodeVMStorageLatencyWidespread | critical | >50% of active VMs on a node with P99 > 100ms for 10m; unchanged |
+| VMIDiskSaturated | critical | Aggregate virtqueue occupancy > 90% for 5m; unchanged |
 
-| Storage-class summary | Severity | Condition |
-|-----------------------|----------|-----------|
-| StorageClassVMILatencyHigh | warning | Read/write tail above 100ms; population threshold for 10m |
-| StorageClassVMIFlushLatencyHigh | warning | Estimated P99 flush latency above 500ms; population threshold for 10m |
-| StorageClassBlockLatencyHigh | warning | Block read/write tail above 100ms; population threshold for 10m |
-| StorageClassNFSLatencyHigh | warning | Estimated P99 NFS latency above 250ms; population threshold for 10m |
-| StorageClassGuestLatencyHigh | warning | Guest average above 100ms; population threshold for 10m |
+Each disk/source must independently satisfy its original condition before aggregation:
 
-The storage-class population threshold is **≥10 affected VMIs, or ≥10% affected with at least 3 affected VMIs**. Individual alerts continue detecting isolated incidents below that threshold. These counts indicate the extent of degradation; they do not establish its cause or assign responsibility to a VM owner.
+| Source | Condition | Persistence |
+|--------|-----------|-------------|
+| QMP read/write | Estimated P99 > 100ms over 5m | 10m |
+| QMP flush | Estimated P99 > 500ms over 10m | 15m |
+| Guest read/write | Reported average > 100ms | 15m |
+| Block read/write | Estimated P99 > 100ms over 5m | 10m |
+| NFS read/write | Estimated P99 > 250ms over 5m | 10m |
+
+The storage-class population threshold remains **≥10 affected VMIs, or ≥10% affected with at least 3 affected VMIs**, continuously for 10m for an individual source. Collector agreement is not required. Source or disk handoffs cannot satisfy a persistence timer together. These counts describe the extent of degradation, not its cause.
 
 All alerts set `kubernetes_operator_part_of="kubevirt"`. Dedicated VMI alerts set `kubernetes_operator_component="kubevirt"` and `operator_health_impact="none"` so the Virtualization alert matcher places them with VM workloads. Storage-class, node, exporter-health, and generic pod/PVC alerts set `kubernetes_operator_component="kubevirt-metrics-exporter"` and `operator_health_impact="none"` so they remain cluster-level alerts. The pod/PVC alerts also cover non-VMI workloads, so they cannot be classified as VM-only alerts. These labels classify alerts in the console; they do not configure authorization or notification delivery. `operator_health_impact="none"` is deliberate: storage latency or a metrics-exporter fault does not establish that the virtualization operator is unhealthy. Severity still expresses the urgency of the alert.
 
-Histogram summaries require at least 100 operations per disk/pod-volume and operation in the preceding 5m, except flush, which uses 10m to match its P99 window. The active denominator uses the same activity floor. Read/write and block summaries require more than 1% of operations above 100ms. Flush and NFS summaries preserve the existing estimated P99 thresholds of 500ms and 250ms and their 10m/5m measurement windows. Quantiles use all histogram buckets and accept both `le="1"` and `le="1.0"`. With the default 10ms, 100ms and 1s buckets, sub-second quantiles are interpolated estimates. Custom `--boundaries` must retain 100ms for the read/write and block summaries. Individual alert thresholds and persistence, the QMP-only node condition, and `VMIDiskSaturated` remain unchanged.
+Histogram summaries require at least 100 operations per disk/pod-volume and operation in the preceding 5m, except flush, which uses 10m to match its P99 window. The active denominator uses the same activity floor. Read/write and block summaries require more than 1% of operations above 100ms. Flush and NFS summaries preserve the existing estimated P99 thresholds of 500ms and 250ms and their 10m/5m measurement windows. Quantiles use all histogram buckets and accept both `le="1"` and `le="1.0"`. With the default 10ms, 100ms and 1s buckets, sub-second quantiles are interpolated estimates. Custom `--boundaries` must retain 100ms for the read/write and block summaries. Latency thresholds and nominal 10m/15m qualification durations remain unchanged. The transition policy below deliberately changes behavior during monitoring gaps, shared recovery and initial shared qualification. The QMP-only node condition and `VMIDiskSaturated` remain unchanged.
 
-Intermediate `vmi:kme_*_latency_{affected,active}:bool` records retain namespace, name, node, pod, operation and available disk/PVC labels without requiring PVC metadata. `pod:kme_{block,nfs}_io_latency_{affected,active}:bool` records and individual block/NFS alerts also retain non-VMI pods, including backup pods. Individual block/NFS alerts keep pod/PVC identity independent of VMI metadata; storage-class summaries tolerate up to five minutes of missing VMI metadata before dropping the mapping. PVC/storage-class metadata is required only for storage-class summaries; unenriched workloads remain covered by individual alerts. Disks are deduplicated into VMIs before counting. Guest summaries use VMIs reporting guest latency as their denominator. The node summary derives from per-VMI QMP records with the original combined-disk/read-write P99 and positive-activity denominator, independently of the storage-class summary floors.
+Intermediate `vmi:kme_*_latency_{affected,active}:bool` records retain namespace, name, node, pod, operation and available disk/PVC labels without requiring PVC metadata. Pod records also retain non-VMI workloads, including backup pods. PVC metadata is required only for shared coverage. Disks are deduplicated into VMIs before storage-class counting. Guest summaries use VMIs reporting guest latency as their denominator. The node summary remains QMP-only, using its original combined-disk/read-write P99 and positive-activity denominator.
 
-Storage-class and node alerts use the exporter namespace; individual alerts retain their workload namespace. Each collector detects independently; collector agreement is not required. This repository does not deploy Alertmanager routes or inhibition, so a storage-class summary can notify alongside its individual workload alerts. Deployments that need fewer notifications must validate a grouping or inhibition policy against the labels already present on the alerts.
+The aggregation stages are:
+
+1. `kme:storage_latency_condition_{10,15}m:bool` records each breach. Per-disk/source `kme:storage_latency_since_{10,15}m:seconds` stores the start timestamp; `-1` marks evaluated recovery. Qualification uses elapsed time, not a required sample count.
+2. Shared affected/active counts are normalized by source. `storageclass:kme_latency_since:seconds` tracks initial qualification, while `storageclass:kme_latency_last_qualified:seconds` retains an already-qualified shared incident through interruptions shorter than two minutes.
+3. `kme:storage_latency_covered:bool` matches qualified conditions to affected members by workload, disk/PVC, operation and source. Backup pods, disks below the summary activity floor, unknown PVCs and unrelated conditions stay visible.
+4. `kme:storage_latency_waiting:bool` provides a bounded initial wait for a matching pending summary. `kme:storage_latency_uncovered:bool` feeds the VMI/pod alerts after subtracting covered and temporarily waiting conditions.
+
+The storage group evaluates every **30 seconds**, with dependent rules ordered in the same group. Timestamp state uses its own previous samples from a two-minute range. A skipped evaluation does not reset the start timestamp if state is still available; a gap of two minutes or more starts qualification again. An evaluated workload-condition disappearance resets qualification immediately. A condition rule that stops updating cannot retain workload state indefinitely: its last sample must be less than two minutes old. These rules require local recent recording-rule history; installing them without that state or returning from a prolonged outage starts qualification again. They do not provide native alert-state restoration after a prolonged outage. Aggregate alerts intentionally have no additional `for`.
+
+An already-qualified shared incident is retained for **less than two minutes after its last qualifying evaluation**. Recovery within that interval resumes the existing incident rather than requiring another ten minutes. After the grace expires, remaining qualified workload conditions reappear immediately. Suppression still requires current affected membership: a disk dropping below the activity floor can become individually visible while its shared incident remains active. This grace does not merge different sources or operations and does not retain recovered workload conditions.
+
+At initial qualification, a workload matching an affected member of a **pending** shared summary can wait up to **90 additional seconds**. If the summary qualifies, it covers that condition; if the shared condition disappears, the workload is released immediately. If it remains pending beyond the bound, the workload alerts. Isolated workloads, backups, missing mappings and below-floor disks receive no extra wait. This reduces short individual-to-summary transitions but cannot eliminate every transition when workloads begin degrading at substantially different times.
+
+VMI identity comes directly from QMP/guest metrics or from `pod:kme_vmi:info` for block/NFS. The latter tolerates metadata gaps of up to five minutes. After that, a pod alert replaces the VMI alert without another qualification period; recovery reverses the transition. `pvc:kme_storageclass:info` retains PVC mappings for less than two minutes, prefers current metadata over cached values, and refuses ambiguous cached mappings. Once the mapping expires, qualified workload coverage returns even if a shared alert remains in its recovery grace.
+
+Workload annotations report the highest observed disk statistic **per source**: QMP/block/NFS P99 and guest average are explicitly distinguished. `kme:storage_latency_detail:seconds` and `vmi:kme_storage_latency_detail:seconds` retain disk/PVC/node details for uncovered conditions. Shared annotations show affected and active VMI counts per source; do not sum these counts because the same VMI can appear in multiple sources. All three alerts link to this runbook.
+
+For a VMI, substitute its namespace and name to retrieve contributing disks, PVCs and nodes:
+
+```promql
+vmi:kme_storage_latency_detail:seconds{namespace="workload-namespace", name="vm-name"}
+```
+
+For an unmapped or non-VMI pod:
+
+```promql
+kme:storage_latency_detail:seconds{namespace="workload-namespace", pod="pod-name"}
+```
+
+Storage-class and node alerts use the exporter namespace; workload alerts retain their workload namespace. Rules assume evaluation within one cluster. No Alertmanager configuration is deployed: rule-level suppression reduces firing alert instances itself. Alertmanager grouping and routing can additionally control notification delivery. The critical node alert remains independent and can fire alongside these warning alerts.
+
+**Migration:** the three consolidated latency alert names replace the six individual and five storage-class source-specific names. Update routes, silences and integrations matching the old names or disk/PVC/node labels. Threshold values and nominal qualification durations are preserved. Alert identity, grouping, bounded gap tolerance and shared-transition timing intentionally change.
+
+Run `hack/test-alert-rules.sh` with `promtool` and Python/PyYAML installed. The legacy scenarios validate current diagnostic records with previous source-specific alert expectations and use the actual deployed definitions for unchanged alerts. Aggregation expectations independently assert classification labels, and raw-metric scenarios verify diagnostic annotations. `hack/replay-storage-alerts.py --help` describes replaying captured OpenMetrics through both manifests without inventing missing metadata. OpenMetrics timestamps default to seconds (including fractional seconds); use `--timestamp-unit milliseconds` for legacy range exports. Empty inputs and unrecognized promtool output fail the replay instead of producing a misleading zero count. Replay output may contain customer identifiers; keep it outside the repository.
 
 **Exporter health** — alerts when the exporter itself is unhealthy or producing stale data:
 
