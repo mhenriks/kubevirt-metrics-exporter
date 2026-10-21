@@ -6,6 +6,7 @@ import (
 	"crypto/x509/pkix"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -65,5 +66,58 @@ func TestTLSProfileInputs(t *testing.T) {
 	}
 	if _, err := parseCipherSuites("ECDHE-ECDSA-AES128-GCM-SHA256,not-a-cipher"); err == nil {
 		t.Fatal("a cipher list containing an invalid cipher was accepted")
+	}
+}
+
+func TestTLSGroups(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		groups string
+		want   []tls.CurveID
+	}{
+		{
+			name: "empty group list", groups: "", want: nil,
+		},
+		{
+			name: "one group in the list", groups: "X25519", want: []tls.CurveID{tls.X25519},
+		},
+		{
+			name: "multiple groups in the list", groups: "X25519,secp256r1,secp384r1", want: []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384},
+		},
+		{
+			name: "multiple groups in the list with spaces", groups: " X25519 , secp256r1 , secp384r1 ", want: []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := parseTLSGroups(tc.groups)
+			if err != nil {
+				t.Fatalf("parseTLSGroups(%q): returned error: %v", tc.groups, err)
+			}
+
+			if !slices.Equal(res, tc.want) {
+				t.Errorf("parseTLSGroups(%q) = %v, want %v", tc.groups, res, tc.want)
+			}
+		})
+	}
+}
+
+func TestTLSGroups_unknownGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		groups string
+	}{
+		{
+			name: "single unknow group", groups: "unknownGroup",
+		},
+		{
+			name: "mix valid and non-valid groups", groups: "X25519,unknownGroup,secp256r1,secp384r1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseTLSGroups(tc.groups)
+			if err == nil {
+				t.Errorf("should return error, but didn't")
+			}
+		})
 	}
 }

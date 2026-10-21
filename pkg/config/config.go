@@ -22,6 +22,7 @@ type Config struct {
 	TLSClientCAFile     string
 	TLSMinVersion       string
 	TLSCipherSuites     string
+	TLSGroups           string
 	LogLevel            string
 	NodeName            string
 	Namespaces          string
@@ -79,6 +80,7 @@ func Parse() *Config {
 	flag.StringVar(&c.TLSClientCAFile, "tls-client-ca-file", envOrDefault("TLS_CLIENT_CA_FILE", ""), "PEM CA bundle used to verify metrics client certificates (optional; otherwise OpenShift's authoritative client CA is used)")
 	flag.StringVar(&c.TLSMinVersion, "tls-min-version", envOrDefault("TLS_MIN_VERSION", "VersionTLS12"), "Minimum TLS version (VersionTLS10, VersionTLS11, VersionTLS12, or VersionTLS13)")
 	flag.StringVar(&c.TLSCipherSuites, "tls-cipher-suites", envOrDefault("TLS_CIPHER_SUITES", ""), "Comma-separated cipher names from an OpenShift TLS profile (OpenSSL format, e.g. ECDHE-ECDSA-AES128-GCM-SHA256); TLS 1.3 suites are configured by Go")
+	flag.StringVar(&c.TLSGroups, "tls-groups", envOrDefault("TLS_GROUPS", ""), "Comma-separated group names from an OpenShift TLS profile (OpenSSL format, e.g. X25519)")
 	flag.StringVar(&c.LogLevel, "log-level", envOrDefault("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 	flag.StringVar(&boundariesStr, "boundaries", envOrDefault("BOUNDARIES", "10000000,100000000,1000000000"), "Histogram bucket boundaries in nanoseconds (comma-separated)")
 	flag.StringVar(&c.Namespaces, "namespaces", envOrDefault("NAMESPACES", ""), "Comma-separated list of namespaces to monitor (empty = all)")
