@@ -5,5 +5,5 @@ resources:
 - ../prometheus-rules
 images:
 - name: quay.io/openshift-virtualization/kubevirt-metrics-exporter
-  newName: localhost/kubevirt-metrics-exporter
-  newTag: e2e
+  newName: quay.io/openshift-virtualization/kubevirt-metrics-exporter
+  newTag: latest
