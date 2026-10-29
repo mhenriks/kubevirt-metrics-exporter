@@ -12,7 +12,7 @@ All subsystems are independently enabled/disabled and degrade gracefully if one 
 
 ## Quick start
 
-Install the manifest from the [latest release](https://github.com/openshift-virtualization/kubevirt-metrics-exporter/releases/latest) on your cluster.
+Check the [deployment prerequisites](docs/deployment.md#prerequisites), then install the manifest from the [latest release](https://github.com/openshift-virtualization/kubevirt-metrics-exporter/releases/latest) on your cluster.
 
 ### OpenShift
 
@@ -24,6 +24,8 @@ oc rollout status daemonset/kubevirt-metrics-exporter -n kubevirt-metrics-export
 The OpenShift deployment includes monitoring integration, Perses dashboards, and alerting and recording rules. See the [dashboard catalog](docs/dashboards.md) for available dashboards and their dependencies.
 
 ### Kubernetes
+
+Set up [Prometheus scraping](docs/deployment.md#monitoring-integration) and check the [current Kubernetes image limitation](docs/deployment.md#current-kubernetes-image-limitation) before applying the manifest.
 
 ```bash
 kubectl apply -f https://github.com/openshift-virtualization/kubevirt-metrics-exporter/releases/latest/download/install-kubernetes.yaml

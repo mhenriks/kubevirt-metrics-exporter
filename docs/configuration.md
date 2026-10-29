@@ -2,7 +2,37 @@
 
 [Documentation index](../README.md#documentation)
 
-Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qmp-`, QGA-specific with `--qga-`, eBPF-specific with `--ebpf-`. All flags can be overridden via environment variables.
+The tables below show **binary defaults**, before deployment environment variables or explicit command-line flags are applied. Settings take precedence in this order: explicit flag, environment variable, built-in default. `NODE_NAME` is environment-only and is required; the DaemonSet supplies it from the node name.
+
+Shared flags apply to all subsystems. Collector-specific settings use the `qmp`, `qga`, `ebpf`, `kvm`, or `cgroup` prefix.
+
+## Changing a deployment
+
+For example, disable guest-side collection and change the QMP poll interval on an existing deployment:
+
+```bash
+oc set env daemonset/kubevirt-metrics-exporter -n kubevirt-metrics-exporter --containers=exporter ENABLE_QGA=false QMP_POLL_INTERVAL=30s
+oc rollout status daemonset/kubevirt-metrics-exporter -n kubevirt-metrics-exporter
+```
+
+Use `kubectl` in place of `oc` on Kubernetes. These changes update the pod template and trigger a rollout. For repeatable deployments, keep the same environment settings in your deployment manifests or Kustomize patches; reapplying the bundled manifests can reset settings they define.
+
+Duration settings such as `QMP_POLL_INTERVAL` accept values like `30s` or `1m`. `QGA_TIMEOUT` and `EBPF_SCAN_INTERVAL` take integer seconds. Histogram `BOUNDARIES` are integer nanoseconds.
+
+## Deployment defaults and TLS
+
+The [base DaemonSet](../deploy/base/daemonset.yaml) explicitly enables QMP, QGA, eBPF block/NFS, KVM, and cgroup collection; NFS VFS kprobe tracing remains disabled. Both deployment variants expose plain HTTP health checks on port 8081, although the binary disables the separate health listener by default.
+
+| Deployment | Metrics endpoint | Authentication |
+|------------|------------------|----------------|
+| Kubernetes/base | HTTP `/metrics` on port 8080 | No metrics authentication configured |
+| OpenShift | HTTPS `/metrics` on port 8443 | Client certificate required (mTLS) |
+
+The [OpenShift overlay](../deploy/openshift/kustomization.yaml) mounts a service-serving certificate and sets the TLS version and cipher configuration. The [ServiceMonitor](../deploy/openshift/metrics-servicemonitor.yaml) scrapes every 30 seconds using `scrapeClass: tls-client-certificate-auth`; cluster monitoring must provide that class and its client credentials.
+
+When TLS is enabled, the exporter uses `TLS_CLIENT_CA_FILE` if supplied; otherwise it loads and watches `kube-system/extension-apiserver-authentication` for the client CA. A bearer token alone does not satisfy this metrics endpoint's client-certificate requirement. For TLS outside OpenShift, supply a serving certificate, key, and client CA bundle, and configure the scraper with a trusted client certificate.
+
+The separate `/healthz` listener is for pod probes; a healthy pod does not establish that every collector is producing data.
 
 ## Shared
 
@@ -40,7 +70,7 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 | `--qga-poll-interval` | `QGA_POLL_INTERVAL` | `1m` | Guest metrics poll interval |
 | `--qga-timeout` | `QGA_TIMEOUT` | `10` | Per-command QGA timeout (seconds) |
 | `--qga-exec-wait` | `QGA_EXEC_WAIT` | `1s` | Wait between guest-exec and guest-exec-status |
-| `--qga-retries` | `QGA_RETRIES` | `10` | Max consecutive failures before stopping collection for a VM |
+| `--qga-retries` | `QGA_RETRIES` | `10` | Max consecutive failures before falling back to probing every 60 poll intervals |
 | `--qga-concurrency` | `QGA_CONCURRENCY` | `8` | Max parallel QGA operations |
 | `--qga-label-filter` | `QGA_LABEL_FILTER` | | Additional pod label selector for QGA |
 
@@ -53,6 +83,9 @@ Shared flags apply to all subsystems. QMP-specific flags are prefixed with `--qm
 | `--enable-ebpf-nfs` | `ENABLE_EBPF_NFS` | `true` | Enable NFS tracing |
 | `--enable-ebpf-nfs-kprobe` | `ENABLE_EBPF_NFS_KPROBE` | `false` | Enable NFS VFS kprobe tracing |
 | `--ebpf-scan-interval` | `EBPF_SCAN_INTERVAL` | `30` | Device-to-pod resolution interval (seconds) |
+| `--ebpf-block-map-size` | `EBPF_BLOCK_MAP_SIZE` | `10240` | Max entries in the block start timestamp map |
+| `--ebpf-nfs-map-size` | `EBPF_NFS_MAP_SIZE` | `10240` | Max entries in the NFS start timestamp map |
+| `--ebpf-nfs-kprobe-map-size` | `EBPF_NFS_KPROBE_MAP_SIZE` | `10240` | Max entries in the NFS kprobe start timestamp map |
 | `--ebpf-proc-path` | `EBPF_PROC_PATH` | `/proc` | Host proc filesystem path |
 
 ## KVM

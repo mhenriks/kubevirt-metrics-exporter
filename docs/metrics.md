@@ -36,9 +36,9 @@ VMI-level storage and KVM metrics use the `kubevirt_vmi_*` prefix. Per-VMI cgrou
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `kubevirt_vmi_storage_io_latency_seconds` | histogram | namespace, name, node, disk, persistentvolumeclaim, operation | Per-disk I/O latency for KubeVirt VMs |
-| `kubevirt_vmi_storage_queue_inuse` | gauge | namespace, name, node, disk, persistentvolumeclaim, queue, bus | In-flight descriptors in a storage virtqueue (`bus="virtio"` for virtio-blk disks, `bus="scsi"` for virtio-scsi controllers; `disk` and `persistentvolumeclaim` are empty for SCSI) |
-| `kubevirt_vmi_storage_queue_size` | gauge | namespace, name, node, disk, persistentvolumeclaim, queue, bus | Capacity (max descriptors) of a storage virtqueue (see queue_inuse for label semantics) |
+| `kubevirt_vmi_storage_io_latency_seconds` | histogram | namespace, name, node, pod, disk, persistentvolumeclaim, operation | Per-disk I/O latency for KubeVirt VMs |
+| `kubevirt_vmi_storage_queue_inuse` | gauge | namespace, name, node, pod, disk, persistentvolumeclaim, queue, bus | In-flight descriptors in a storage virtqueue (`bus="virtio"` for virtio-blk disks, `bus="scsi"` for virtio-scsi controllers; `disk` and `persistentvolumeclaim` are empty for SCSI) |
+| `kubevirt_vmi_storage_queue_size` | gauge | namespace, name, node, pod, disk, persistentvolumeclaim, queue, bus | Capacity (max descriptors) of a storage virtqueue (see queue_inuse for label semantics) |
 | `kme_qmp_scrape_errors_total` | counter | | Errors during QMP poll cycles |
 | `kme_qmp_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last QMP poll |
 
@@ -48,8 +48,8 @@ The `bus` label distinguishes `virtio` (per-disk virtio-blk devices) from `scsi`
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `kubevirt_vmi_storage_guest_latency_avg_seconds` | gauge | namespace, name, node, disk, persistentvolumeclaim, operation, drive | Average guest-side I/O latency per disk (read/write), derived via Little's Law |
-| `kubevirt_vmi_storage_guest_iops` | gauge | namespace, name, node, disk, persistentvolumeclaim, operation, drive | Guest-side IOPS per disk (read/write) |
+| `kubevirt_vmi_storage_guest_latency_avg_seconds` | gauge | namespace, name, node, pod, disk, persistentvolumeclaim, operation, drive | Average guest-side I/O latency per disk (read/write), derived via Little's Law |
+| `kubevirt_vmi_storage_guest_iops` | gauge | namespace, name, node, pod, disk, persistentvolumeclaim, operation, drive | Guest-side IOPS per disk (read/write) |
 | `kme_qga_scrape_errors_total` | counter | | Errors during QGA poll cycles |
 | `kme_qga_last_poll_timestamp_seconds` | gauge | | Unix timestamp of last QGA poll |
 
@@ -59,7 +59,7 @@ Disk mapping limitations:
 - Disk mappings are established when the VMI is first discovered. Volumes hotplugged after that point are not tracked (their `disk` and `persistentvolumeclaim` labels will be empty).
 - SATA disks can only be mapped when a `serial` is explicitly set on the disk in the VM spec. This is a QEMU guest agent limitation. Without `<serial>` the label `persistentvolumeclaim` will be empty.
 
-The QGA subsystem collects raw Windows Performance Counters (`Win32_PerfRawData_PerfDisk_PhysicalDisk`) via `wmic` executed through the QEMU Guest Agent. Metrics are computed by diffing two successive counter snapshots using Little's Law to derive latency from uint64 queue-length counters (avoiding uint32 overflow in the direct latency counters). VMs without a guest agent (e.g., Linux) or with `guest-exec` blacklisted are automatically detected and excluded after a configurable number of retries.
+The QGA subsystem collects raw Windows Performance Counters (`Win32_PerfRawData_PerfDisk_PhysicalDisk`) via PowerShell `Get-CimInstance` executed through the QEMU Guest Agent. Metrics are computed by diffing two successive counter snapshots using Little's Law to derive latency from uint64 queue-length counters (avoiding uint32 overflow in the direct latency counters). Guest-side collection requires Windows with PowerShell and a functioning QEMU Guest Agent that allows `guest-exec`. After the configured failure threshold, collection falls back to probing every 60 poll intervals; blacklisted commands trigger this fallback immediately. A successful probe restores normal polling.
 
 ## eBPF metrics
 
@@ -109,8 +109,8 @@ Per-node kernel thread and KSM metrics:
 | `kme_node_movable_bytes_all_orders` | gauge | node, numa | Movable-capable free buddy memory across all orders in bytes (Movable zone if present, else Normal; buddy minus Unmovable and Isolate) |
 | `kme_node_buddy_bytes_order_ge_9` | gauge | node, numa | Total free buddy memory at page order ≥9 in bytes (Movable zone if present, else Normal; exact from `/proc/buddyinfo`) |
 | `kme_node_buddy_bytes_all_orders` | gauge | node, numa | Total free buddy memory across all orders in bytes (Movable zone if present, else Normal; exact from `/proc/buddyinfo`) |
-| `kme_node_unmovable_bytes_order_ge_9` | gauge | node, numa | Unmovable free buddy memory at page order ≥9 in bytes (Normal + Movable zones, `/proc/pagetypinfo`) |
-| `kme_node_unmovable_bytes_all_orders` | gauge | node, numa | Unmovable free buddy memory across all orders in bytes (Normal + Movable zones, `/proc/pagetypinfo`) |
+| `kme_node_unmovable_bytes_order_ge_9` | gauge | node, numa | Unmovable free buddy memory at page order ≥9 in bytes (Normal + Movable zones, `/proc/pagetypeinfo`) |
+| `kme_node_unmovable_bytes_all_orders` | gauge | node, numa | Unmovable free buddy memory across all orders in bytes (Normal + Movable zones, `/proc/pagetypeinfo`) |
 | `kme_node_zone_present_bytes` | gauge | node, numa, zone | Zone size in bytes from `/proc/zoneinfo` `present` pages |
 | `kme_node_zone_free_bytes` | gauge | node, numa, zone | Zone free pages in bytes from `/proc/zoneinfo` `pages free` |
 | `kme_node_slab_reclaimable_bytes` | gauge | node, numa | Reclaimable slab in bytes from zoneinfo per-node `nr_slab_reclaimable` (not zone-scoped) |

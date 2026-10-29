@@ -54,7 +54,7 @@ Storage-class and node alerts use the exporter namespace; individual alerts reta
 | KMEeBPFSubsystemDown | warning | Block eBPF subsystem down for 10m |
 | KMEAbsent | critical | No metrics scraped for 10m |
 
-The `KMEAbsent` alert uses the Prometheus `up` metric with `job="kubevirt-metrics-exporter"`. If your PodMonitor uses a different job name, update the alert expression to match.
+The `KMEAbsent` alert uses the Prometheus `up` metric with `job="kubevirt-metrics-exporter"`. If your scrape configuration uses a different job name, update the alert expression to match.
 
 QMP histogram latency values reported in alert annotations are approximate due to the default histogram bucket granularity (10ms, 100ms, 1s). For higher precision, configure finer-grained boundaries via `--boundaries`.
 

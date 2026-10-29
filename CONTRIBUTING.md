@@ -4,14 +4,15 @@ Thank you for your interest in contributing!
 
 ## Building and testing
 
-Prerequisites: Go 1.25+, clang, llvm, libbpf-devel
+Prerequisites: Go 1.26.0 or newer (see [go.mod](go.mod)), clang, LLVM, and libbpf development headers (`libbpf-devel` on Fedora/RHEL or `libbpf-dev` on Debian/Ubuntu). Container builds require Podman. Run commands from the repository root.
 
 ```bash
 make build        # generates eBPF bindings and builds the binary (requires clang/llvm)
 make test         # runs all tests (requires generated eBPF bindings)
-make test-unit    # runs unit tests for non-eBPF packages (works on macOS)
 make image        # builds container image with podman (includes full toolchain)
 ```
+
+`make test` does not regenerate eBPF bindings; run `make generate` first when the bindings need updating. `make build` currently targets Linux/amd64.
 
 To build and push a custom image:
 

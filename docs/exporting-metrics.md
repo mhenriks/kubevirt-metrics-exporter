@@ -2,7 +2,7 @@
 
 [Documentation index](../README.md#documentation)
 
-[`scripts/export-kme-metrics.py`](../scripts/export-kme-metrics.py) exports every metric defined by this exporter from a Prometheus-compatible server using its range-query API. This includes `kme_*`, `kubevirt_vmi_*`, `container_memory_*`, and `node_ksmd_general_profit_bytes` series, while excluding generic Go/process metrics supplied by the Prometheus client library. It exports the preceding 24 hours at 30-second resolution by default, matching the PodMonitor scrape interval, and writes the API's JSON response to a timestamped file.
+[`scripts/export-kme-metrics.py`](../scripts/export-kme-metrics.py) exports every metric defined by this exporter from a Prometheus-compatible server using its range-query API. This includes `kme_*`, `kubevirt_vmi_*`, `container_memory_*`, and `node_ksmd_general_profit_bytes` series, while excluding generic Go/process metrics supplied by the Prometheus client library. It exports the preceding 24 hours at 30-second resolution by default, matching the bundled OpenShift ServiceMonitor scrape interval, and writes the API's JSON response to a timestamped file.
 
 Run the examples from the repository root. The script requires Python 3. Automatic service discovery and port-forwarding additionally require `oc` or `kubectl`; no `jq`, `curl`, or platform-specific `date` implementation is required.
 
