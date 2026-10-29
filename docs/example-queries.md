@@ -1,6 +1,10 @@
 # Example PromQL Queries
 
+[Documentation index](../README.md#documentation)
+
 Per-metric query reference for kubevirt-metrics-exporter. All rate windows use `[5m]` — widen to `[15m]` or `[1h]` for trending, narrow to `[2m]` for live debugging.
+
+See the [metric reference](metrics.md) for collection details and limitations, and [memory and THP](memory-and-thp.md) for memory dashboard interpretation.
 
 ---
 

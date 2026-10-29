@@ -2,6 +2,25 @@
 
 Thank you for your interest in contributing!
 
+## Building and testing
+
+Prerequisites: Go 1.25+, clang, llvm, libbpf-devel
+
+```bash
+make build        # generates eBPF bindings and builds the binary (requires clang/llvm)
+make test         # runs all tests (requires generated eBPF bindings)
+make test-unit    # runs unit tests for non-eBPF packages (works on macOS)
+make image        # builds container image with podman (includes full toolchain)
+```
+
+To build and push a custom image:
+
+```bash
+make push IMAGE=quay.io/myuser/kubevirt-metrics-exporter TAG=v0.1.0
+```
+
+See [deployment](docs/deployment.md#from-source) to deploy a local build.
+
 ## Development workflow
 
 1. Fork the repository and create a feature branch
